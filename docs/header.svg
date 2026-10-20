@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 300" width="1280" height="300" font-family="'JetBrains Mono', SFMono-Regular, Consolas, Menlo, monospace">
+  <defs>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#ffb36b" stop-opacity=".22"/>
+      <stop offset=".55" stop-color="#ffb36b" stop-opacity=".05"/>
+      <stop offset="1" stop-color="#ffb36b" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="disk" x1="0" x2="1">
+      <stop offset="0" stop-color="#ffb36b" stop-opacity="0"/>
+      <stop offset=".3" stop-color="#ffb36b" stop-opacity=".9"/>
+      <stop offset=".7" stop-color="#ffe2c4" stop-opacity="1"/>
+      <stop offset="1" stop-color="#ffb36b" stop-opacity="0"/>
+    </linearGradient>
+    <style>
+      .pulse{animation:p 2.4s ease-in-out infinite}
+      @keyframes p{50%{opacity:.25}}
+      .spin{transform-origin:1040px 150px;animation:s 40s linear infinite}
+      @keyframes s{to{transform:rotate(360deg)}}
+    </style>
+  </defs>
+
+  <rect width="1280" height="300" fill="#050506"/>
+
+  <!-- star dust -->
+  <g fill="#e9e6df">
+    <circle cx="96" cy="58" r=".9" opacity=".5"/><circle cx="212" cy="252" r=".7" opacity=".4"/>
+    <circle cx="388" cy="38" r=".8" opacity=".35"/><circle cx="512" cy="264" r="1" opacity=".5"/>
+    <circle cx="640" cy="72" r=".6" opacity=".35"/><circle cx="702" cy="228" r=".8" opacity=".4"/>
+    <circle cx="786" cy="46" r="1.1" opacity=".55"/><circle cx="858" cy="268" r=".7" opacity=".35"/>
+    <circle cx="1196" cy="62" r=".9" opacity=".5"/><circle cx="1224" cy="236" r=".7" opacity=".4"/>
+    <circle cx="930" cy="104" r=".6" opacity=".4"/><circle cx="1150" cy="196" r=".6" opacity=".35"/>
+    <circle cx="300" cy="160" r=".6" opacity=".25"/><circle cx="160" cy="132" r=".5" opacity=".3"/>
+  </g>
+
+  <!-- frame brackets -->
+  <g fill="none" stroke="#e9e6df" stroke-opacity=".22" stroke-width="1">
+    <path d="M14 30V14h16M1250 14h16v16M1266 270v16h-16M30 286H14v-16"/>
+  </g>
+
+  <!-- black hole glyph -->
+  <circle cx="1040" cy="150" r="128" fill="url(#glow)"/>
+  <g class="spin" fill="none" stroke="#ffb36b" stroke-opacity=".18" stroke-dasharray="2 6">
+    <circle cx="1040" cy="150" r="104"/>
+  </g>
+  <g transform="rotate(-12 1040 150)" fill="none" stroke-linecap="round">
+    <!-- far side of the disk -->
+    <path d="M890 150A150 18 0 0 1 1190 150" stroke="url(#disk)" stroke-width="4" opacity=".75"/>
+    <!-- lensed images: far side lifted over the shadow, faint secondary underneath -->
+    <path d="M980 152A60 58 0 0 1 1100 152" stroke="url(#disk)" stroke-width="9"/>
+    <path d="M992 154A48 34 0 0 0 1088 154" stroke="url(#disk)" stroke-width="2.5" opacity=".6"/>
+  </g>
+  <circle cx="1040" cy="150" r="40" fill="#050506"/>
+  <circle cx="1040" cy="150" r="41.5" fill="none" stroke="#ffe2c4" stroke-width=".8" stroke-opacity=".9"/>
+  <!-- near side of the disk, crossing in front of the shadow -->
+  <path d="M890 150A150 18 0 0 0 1190 150" fill="none" stroke="url(#disk)" stroke-width="6" stroke-linecap="round" transform="rotate(-12 1040 150)"/>
+
+  <!-- scale ticks under glyph -->
+  <g stroke="#e9e6df" stroke-opacity=".3">
+    <path d="M940 262h200"/>
+    <path d="M940 258v8M990 260v4M1040 258v8M1090 260v4M1140 258v8"/>
+  </g>
+  <g fill="#e9e6df" fill-opacity=".35" font-size="9" letter-spacing="2" text-anchor="middle">
+    <text x="940" y="281">0</text><text x="1040" y="281">1.5 RS</text><text x="1140" y="281">3 RS</text>
+  </g>
+
+  <!-- title block -->
+  <rect class="pulse" x="64" y="88" width="9" height="9" fill="#ffb36b"/>
+  <text x="90" y="98" fill="#e9e6df" font-size="15" letter-spacing="7" font-weight="500">SCHWARZSCHILD · RAY-TRACED</text>
+  <text x="62" y="160" fill="#e9e6df" font-size="54" letter-spacing="22" font-weight="500">EVENT HORIZON</text>
+  <path d="M64 186h560" stroke="#e9e6df" stroke-opacity=".14"/>
+  <path d="M64 186h64" stroke="#ffb36b"/>
+  <text x="64" y="214" fill="#e9e6df" fill-opacity=".55" font-size="13" letter-spacing="3">A REAL-TIME BLACK HOLE SIMULATOR FOR THE BROWSER</text>
+  <g font-size="10" letter-spacing="2.5">
+    <text x="64" y="252" fill="#ffb36b" fill-opacity=".8">01</text><text x="88" y="252" fill="#e9e6df" fill-opacity=".38">GEODESICS</text>
+    <text x="204" y="252" fill="#ffb36b" fill-opacity=".8">02</text><text x="228" y="252" fill="#e9e6df" fill-opacity=".38">ACCRETION</text>
+    <text x="344" y="252" fill="#ffb36b" fill-opacity=".8">03</text><text x="368" y="252" fill="#e9e6df" fill-opacity=".38">DOPPLER</text>
+    <text x="466" y="252" fill="#ffb36b" fill-opacity=".8">04</text><text x="490" y="252" fill="#e9e6df" fill-opacity=".38">EXPORT</text>
+  </g>
+</svg>

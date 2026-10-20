@@ -746,5 +746,19 @@ syncUI();
 $('#btnPanel').classList.add('on');
 $('#panelMeta').textContent = hasFloat ? 'GL2 · HDR' : 'GL2 · LDR';
 if(innerWidth < 640) togglePanel();
+
+/* Small scripting API, e.g. from the console:
+   EventHorizon.set({ sky: 'grid', guides: true }); EventHorizon.preset('edge'); EventHorizon.time = 0; */
+window.EventHorizon = {
+  params: P,
+  camera: goal,
+  get time(){ return simTime; },
+  set time(v){ simTime = +v || 0; },
+  set(o){ Object.assign(P, o); if('fov' in o) goal.fov = P.fov; if('roll' in o) goal.roll = P.roll; syncUI(); },
+  preset: applyPreset,
+  snapCamera(){ clampGoal(); Object.assign(cam, goal); },
+  togglePanel, toggleHUD, snapshot, toggleRecording,
+};
+
 requestAnimationFrame(frame);
 })();

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 64" width="1280" height="64" font-family="'JetBrains Mono', SFMono-Regular, Consolas, Menlo, monospace">
+  <rect width="1280" height="64" fill="#050506"/>
+  <path d="M14 30V14h16M1250 14h16v16M1266 34v16h-16M30 50H14V34" fill="none" stroke="#e9e6df" stroke-opacity=".22"/>
+  <path d="M64 32h420M796 32h420" stroke="#e9e6df" stroke-opacity=".14"/>
+  <rect x="510" y="28" width="8" height="8" fill="#ffb36b"/>
+  <text x="534" y="36" fill="#e9e6df" fill-opacity=".5" font-size="11" letter-spacing="5">END OF TRANSMISSION</text>
+</svg>
