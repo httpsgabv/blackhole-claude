@@ -6,7 +6,7 @@
   <img src="https://img.shields.io/badge/RENDER-WEBGL_2-ffb36b?style=flat-square&labelColor=0b0c10" alt="WebGL 2">
   <img src="https://img.shields.io/badge/METRIC-KERR-ffb36b?style=flat-square&labelColor=0b0c10" alt="Kerr metric">
   <img src="https://img.shields.io/badge/BUILD-NONE-e9e6df?style=flat-square&labelColor=0b0c10" alt="No build step">
-  <img src="https://img.shields.io/badge/DEPS-ZERO-e9e6df?style=flat-square&labelColor=0b0c10" alt="Zero dependencies">
+  <img src="https://img.shields.io/badge/DEPS-THREE.JS_(ANATOMY_3D_ONLY)-e9e6df?style=flat-square&labelColor=0b0c10" alt="Only dependency: three.js, for the 3D anatomy view">
 </p>
 
 <p align="center">
@@ -260,6 +260,13 @@ What you see depends on how you move. The camera can **hover**, ride a **circula
 <br>
 
 ### See its anatomy &nbsp;<sub><code>A</code></sub>
+
+<p align="center">
+  <img src="docs/media/anatomy-3d.jpg" alt="The anatomy instruments as full-screen 3D models with orbit controls" width="100%">
+</p>
+<p align="center"><sub><code>ANATOMY · 3D</code> &nbsp;THE SAME INSTRUMENTS AS ORBITABLE MODELS · SHADOWS · BLOOM · LIVE READOUTS</sub></p>
+
+**Anatomy** opens as a full-screen **3D** view of the instrument models. Drag to orbit, right-drag or shift-drag to pan, and scroll to zoom. A slider sets each figure's parameter (spin, inspiral time, γ, the traveller's ℓ); ← → also adjust it, 1–4 switch figures, and R resets the camera. In Fig. 3 the jets' Doppler brightness is computed from the real camera direction, so orbiting toward the axis makes the approaching jet blaze. The view uses [three.js](https://threejs.org) (r160, pinned, from a CDN); if it cannot load, the 2D plates below are used instead. **Plate** switches to them at any time.
 
 <p align="center">
   <img src="docs/media/anatomy.jpg" alt="Isometric anatomy figure: the spinning black hole as a bench instrument" width="100%">
@@ -519,7 +526,8 @@ EventHorizon.snapshot();
 index.html        HUD markup, field notes
 css/style.css     interface
 js/shaders.js     Kerr, binary and wormhole tracers, disk, jets, pulsar, skies, bloom, tone mapping (GLSL ES 3.0)
-js/anatomy.js     the anatomy figure: isometric SVG kit, parts, card, interaction
+js/anatomy.js     the anatomy plates: isometric SVG kit, four figures, card, interaction
+js/anatomy3d.js   the anatomy in 3D: the same instruments as three.js models, orbit camera, HUD
 js/main.js        render graph, Kerr helpers, scenes (binary, wormhole, pulsar), camera, observers, probe, inspector, UI, export
 docs/             README media
 ```

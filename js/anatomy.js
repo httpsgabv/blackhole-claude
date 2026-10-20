@@ -794,6 +794,7 @@ root.innerHTML = `
     <div class="an-head">
       <span class="an-tabs">${FIGS.map(f => `<button data-fig="${f.n}">FIG. ${f.n}<span class="tab-name"> · ${{ 1: 'SPIN', 2: 'BINARY', 3: 'JETS', 4: 'WORMHOLE' }[f.n]}</span></button>`).join('')}</span>
       <span class="an-title"></span>
+      <button class="text-btn an-3d" title="Full-screen 3D model">3D</button>
       <button class="an-close" title="Close (A or Esc)">×</button>
     </div>
     <svg class="an-svg" tabindex="0"></svg>
@@ -863,7 +864,8 @@ const endDrag = () => { drag = null; svg.classList.remove('dragging'); };
 svg.addEventListener('pointerup', endDrag);
 svg.addEventListener('pointercancel', endDrag);
 
-function open(n){
+/* the plates (2D isometric drawings); open() prefers the 3D view when it has loaded */
+function openPlate(n){
   const sc = EH().params.scene;
   showFig(n || (sc === 'binary' ? 2 : sc === 'wormhole' ? 4 : 1));
   root.hidden = false;
@@ -882,7 +884,16 @@ function close(){
   cancelAnimationFrame(raf);
   $('#btnAnatomy') && $('#btnAnatomy').classList.remove('on');
 }
-const toggle = () => root.hidden ? open() : close();
+function open(n){
+  if(window.Anatomy3D){ window.Anatomy3D.open(n); return; }
+  openPlate(n);
+}
+const toggle = () => {
+  if(window.Anatomy3D && window.Anatomy3D.isOpen()) window.Anatomy3D.close();
+  else if(!root.hidden) close();
+  else open();
+};
+root.querySelector('.an-3d').onclick = () => { const n = fig.n; close(); if(window.Anatomy3D) window.Anatomy3D.open(n); };
 root.querySelector('.an-close').onclick = close;
 if($('#btnAnatomy')) $('#btnAnatomy').onclick = toggle;
 
@@ -896,5 +907,5 @@ addEventListener('keydown', e => {
   else if(k === 'ArrowLeft' || k === 'ArrowRight'){ fig.arrow(k === 'ArrowRight' ? 1 : -1); e.preventDefault(); }
 });
 
-window.EventHorizonAnatomy = { open, close, toggle, show: showFig };
+window.EventHorizonAnatomy = { open, openPlate, close, toggle, show: showFig };
 })();
