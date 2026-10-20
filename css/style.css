@@ -166,6 +166,9 @@ input[type=range]::-moz-range-thumb{width:8px;height:8px;border-radius:0;backgro
 #timeline{position:absolute;left:50%;bottom:30px;transform:translateX(-50%);display:flex;align-items:center;height:40px;padding:0 6px;gap:2px;background:var(--glass);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid var(--line);pointer-events:auto;white-space:nowrap}
 .tl-btn{width:30px;height:28px;display:flex;align-items:center;justify-content:center;color:var(--dim);transition:color .15s}
 .tl-btn:hover{color:var(--accent)}
+.tl-btn.flash:hover{color:var(--cyan)}
+.btn.flash:hover{color:var(--cyan);border-color:rgba(127,216,255,.45)}
+.flash-ico{width:7px;height:10px;background:currentColor;clip-path:polygon(60% 0,0 58%,45% 58%,35% 100%,100% 40%,55% 40%)}
 .tl-btn.primary{border:1px solid var(--accent-dim);color:var(--accent);margin:0 2px}
 .tl-btn.primary svg{fill:currentColor;stroke:currentColor}
 .tl-btn .i-pause{display:none}

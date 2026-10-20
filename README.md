@@ -130,6 +130,15 @@ Real black holes spin, and spin changes almost everything near the hole. The hor
 
 <sub>The probe, inspector and observer images below use a/M = 0, so their numbers match the Schwarzschild formulas.</sub>
 
+### Flash the disk &nbsp;<sub><code>X</code></sub>
+
+<p align="center">
+  <img src="docs/media/echoes.gif" alt="A flare behind the hole appears first over the shadow, then again below it" width="100%">
+</p>
+<p align="center"><sub><code>FLARE</code> &nbsp;ONE EVENT · SEEN OVER THE SHADOW FIRST, THEN AGAIN BELOW IT ~3 rₛ/c LATER</sub></p>
+
+Light that takes the long way round arrives late. Every ray integrates its own light travel time, $dt/d\zeta$, alongside its path, and the disk is drawn as it was when that light left it. **Flash** sets off a short flare in the gas behind the hole and slows time to ×0.25. The first image appears lifted over the top of the shadow. A few rₛ/c later a second, fainter copy appears below it: that light passed under the hole. Copies that circled the hole more times arrive later still, deep in the photon ring. The ray inspector shows each pixel's travel time and how much longer it took than a straight line.
+
 ### Drop the probe &nbsp;<sub><code>D</code></sub>
 
 <table>
@@ -187,7 +196,7 @@ What you see depends on how you move. The camera can **hover**, ride a **circula
 | &nbsp; | Region | Contents |
 |:--|:--|:--|
 | `▣` | **Telemetry** · top left | Camera radius, physical distance, inclination, observer mode and speed, observer clock rate, escape velocity; probe state, radius, clock rate, proper time, redshift and tidal force; Schwarzschild radius, spin and horizon radius, frame-dragging period (flags the ergosphere), Hawking temperature, evaporation time, frame rate |
-| `⌖` | **Ray inspector** · left | Orbital-plane diagram of the clicked ray, its outcome and numbers, and a plain-language reading |
+| `⌖` | **Ray inspector** · left | Orbital-plane diagram of the clicked ray, its outcome and numbers (including light travel time), and a plain-language reading |
 | `≡` | **Control matrix** · right | Six numbered sections: Simulation, Spacetime, Accretion Disk, Camera, Render, Export. Double-click a slider to reset it |
 | `▶` | **Timeline** · bottom | Reset, slower/reverse, play/pause, faster, step, rate, simulation time in rₛ/c and in physical units, probe orbit phase |
 | `?` | **Field notes** · top right | A short primer on every effect on screen |
@@ -232,6 +241,15 @@ Density $n(R)\,e^{-z^2/2H^2}$ with $H = (H/R)\,R$, plus an envelope $2\times$ wi
 $$I \mathrel{+}= T\,S\,(1 - e^{-\Delta\tau}), \qquad T \mathrel{*}= e^{-k\,\Delta\tau}, \quad k = 0.3$$
 
 where $S$ is the gas's (redshifted) source function and $T$ the transmittance. The gas absorbs less than it emits, which approximates hot, optically thin flow. Steps shrink to $0.4H$ inside the gas, with two jittered samples per step.
+
+</td></tr>
+<tr><td><code>TIME DELAY</code></td><td>
+
+Each ray also integrates coordinate time, which in Boyer–Lindquist form is
+
+$$\rho^2\,\frac{dt}{d\zeta} = \frac{(r^2 + a^2)\,(r^2 + a^2 - ab)}{\Delta} - a\,(a\sin^2\theta - b)$$
+
+Gas is drawn at its retarded time $t_e = t_{now} - \Delta t_{ray}$. A flare at $t_f$ appears in each image once $t_e > t_f$, and different images have different $\Delta t$, so one event shows up several times.
 
 </td></tr>
 <tr><td><code>DOPPLER · REDSHIFT</code></td><td>
@@ -287,6 +305,7 @@ Every astrophysical hole is far colder than the 2.7 K microwave background. The 
 | double-click | Gargantua preset | | `G` | equatorial guides |
 | click *(inspect mode)* | trace that pixel's ray | | `D` | release / recall probe |
 | | | | `T` | ray inspector |
+| | | | `X` | flash (flare + echoes) |
 | | | | `O` | cycle observer mode |
 | | | | `P` | PNG snapshot |
 | | | | `R` | record / stop |
@@ -303,6 +322,7 @@ Every astrophysical hole is far colder than the 2.7 K microwave background. The 
 | | Probe orbit | 2 – 18 rₛ, 0 – 80° | Circular geodesic, lensed like everything else |
 | | Angular momentum kept | 0 – 98% | Share of orbital L kept on release |
 | | Tidal stretch | on / off | Visual, exaggerated; the telemetry gives the real value |
+| | Flare, hot-spot radius | Hot spot · Whole disk, 1 – 12 rₛ | Flash also slows time to ×0.25 |
 | Spacetime | Spin a/M | 0 – 0.998 | Kerr spin parameter; 0.6 by default |
 | | Light bending | 0 – 100% | Scales the mass (and spin) the rays feel |
 | | Doppler beaming | 0 – 100% | Scales the disk velocity used for beaming |
@@ -343,6 +363,7 @@ EventHorizon.preset('edge');          // gargantua · edge · top · close
 EventHorizon.camera.dist = 6;         // eased; call snapCamera() to jump
 EventHorizon.time = 0;
 EventHorizon.releaseProbe();          // resetProbe() to recall it
+EventHorizon.flash();                 // flare behind the hole; watch for the echoes
 EventHorizon.inspect(640, 300);       // trace the ray at CSS pixel (x, y)
 EventHorizon.set({ observer: 'boost', obsBeta: 0.9 });
 EventHorizon.set({ spinA: 0.998 });     // Kerr spin a/M

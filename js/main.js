@@ -45,12 +45,15 @@ const P = {
   fov: 42, roll: -14, autoOrbit: false, orbitSpeed: 0.04,
   observer: 'static', obsBeta: 0.5, obsMove: true, obsBeam: true,
   scale: 0.75, quality: 'med', bloom: 1.3, exposure: 1.05, vignette: 0.6, grain: true,
+  flareMode: 'spot', flareR: 4, flareBright: 6,
   recRes: 'viewport', recDur: 10, recFps: 60,
 };
 
 const cam = { dist: 40, yaw: -0.9, pitch: 0.35, roll: -14, shiftX: 0.14, shiftY: 0.02, fov: 42 };
 const goal = Object.assign({}, cam, PRESETS.gargantua);
 let simTime = 0;
+/* flare: emitted at coordinate time t from (r, φ) on the disk; mode 1 = whole disk */
+let flare = { on: false, t: 0, r: 4, phi: 0, mode: 0 };
 
 /* ================================================================== */
 /* GL plumbing                                                         */
@@ -256,7 +259,8 @@ function kerrRHS(y, b, q, M, a){
   const dAt = -0.5 * Dl * drho * ir4, dBt = -0.5 * drho * ir4;
   const dCt = -0.5 * R * drho * ir4 / Dc + 0.5 * dTh * ir2 - 0.5 * Th * drho * ir4;
   return [Dl * ir2 * pr, pth * ir2, (a * Pp / Dc + (b - a) + b * cs2 / sn2) * ir2,
-          -(dAr * pr * pr + dBr * pth * pth - dCr), -(dAt * pr * pr + dBt * pth * pth - dCt)];
+          -(dAr * pr * pr + dBr * pth * pth - dCr), -(dAt * pr * pr + dBt * pth * pth - dCt),
+          ((r * r + a2) * Pp / Dc - a * (a * sn2 - b)) * ir2];   // dt/dζ
 }
 function kerrStep(y, b, q, h, M, a){
   const f = (v, k, c) => v.map((x, i) => x + c * k[i]);
@@ -512,6 +516,10 @@ function render(){
   u1f(pr, 'uIsco', kerrIsco(aS, P.spin));
   u1f(pr, 'uThick', P.diskModel === 'thick' ? P.diskH : 0);
   u1f(pr, 'uHaze', P.haze);
+  u1f(pr, 'uDelayRef', cam.dist);
+  u4f(pr, 'uFlare', [flare.t, flare.r, flare.phi, flare.mode]);
+  u1f(pr, 'uFlareOn', flare.on ? 1 : 0);
+  u1f(pr, 'uFlareBright', P.flareBright);
   u1f(pr, 'uEscape', Math.max(rCam * 1.05 + 2, P.diskOut * 1.4, 28));
   u1f(pr, 'uStepK', q.k);
   u1i(pr, 'uMaxSteps', q.steps);
@@ -596,6 +604,10 @@ const SECTIONS = [
     { t: 'seg', k: 'mass', label: 'Mass scale', cols: 3,
       opts: [['primordial', '10¹² KG'], ['earth', 'EARTH'], ['stellar', '10 M☉'], ['sgra', 'SGR A*'], ['gargantua', '10⁸ M☉'], ['m87', 'M87*']],
       hint: 'Sets physical units and the Hawking temperature. The geometry is scale-free.' },
+    { t: 'buttons', items: [['<span class="flash-ico"></span>Flash · X', () => triggerFlash(), 'wide flash']] },
+    { t: 'seg', k: 'flareMode', label: 'Flare', opts: [['spot', 'HOT SPOT'], ['disk', 'WHOLE DISK']],
+      hint: 'A flare lights up gas on the far side of the hole. Light that bends over the shadow, or circles the hole, arrives later, so the same flare shows up several times.' },
+    { t: 'range', k: 'flareR', label: 'Hot-spot radius', min: 1, max: 12, step: 0.1, fmt: v => v.toFixed(1) + ' rₛ', dep: () => P.flareMode === 'spot' },
     { t: 'toggle', k: 'planetOn', label: 'Orbiting probe' },
     { t: 'range', k: 'planetR', label: 'Orbit radius', min: 2, max: 18, step: 0.1, fmt: v => v.toFixed(1) + ' rₛ', dep: 'planetOn',
       hint: 'Circular orbits inside the ISCO (3 rₛ without spin) are unstable.' },
@@ -778,7 +790,7 @@ const DEFAULTS = Object.assign({}, P);
 const TELE = [
   ['R_CAM', 'rcam'], ['DISTANCE', 'rphys'], ['INCLINATION', 'incl'], ['OBSERVER', 'obs'], ['CLOCK RATE', 'clock'],
   ['ESCAPE V', 'vesc'], ['PROBE', 'pstate'], ['PROBE R', 'pr'], ['PROBE τ/t', 'probe'], ['PROBE τ', 'ptau'],
-  ['REDSHIFT g', 'pg'], ['TIDAL · 2 m', 'tidal'], ['R_S', 'rs'], ['SPIN · r₊', 'spin'], ['FRAME DRAG', 'drag'], ['HAWKING T', 'hawk'], ['EVAPORATION', 'evap'], ['FRAME', 'fps'],
+  ['REDSHIFT g', 'pg'], ['TIDAL · 2 m', 'tidal'], ['R_S', 'rs'], ['SPIN · r₊', 'spin'], ['FLARE', 'flare'], ['FRAME DRAG', 'drag'], ['HAWKING T', 'hawk'], ['EVAPORATION', 'evap'], ['FRAME', 'fps'],
 ];
 const teleEls = {};
 (function(){
@@ -820,6 +832,11 @@ function fmtSci(v){
   return (v / Math.pow(10, e)).toFixed(2) + 'e' + e;
 }
 function setTele(id, text, warn){ teleEls[id].textContent = text; teleEls[id].classList.toggle('warn', !!warn); }
+function updateFlareTelemetry(tUnit){
+  if(!flare.on){ setTele('flare', '—'); return; }
+  const age = simTime - flare.t;
+  setTele('flare', `t+${age.toFixed(1)} rₛ/c · ${fmtDur(age * tUnit)}`, age < 40);
+}
 function updateProbeTelemetry(rsKm, tUnit){
   const pl = lastPlanet;
   if(!P.planetOn || !pl){
@@ -874,6 +891,7 @@ function updateTelemetry(dt){
   teleEls.clock.textContent = ob.clock.toFixed(4) + '×';
   teleEls.vesc.textContent = Math.sqrt(1 / r).toFixed(3) + ' c';
   updateProbeTelemetry(rsKm, tUnit);
+  updateFlareTelemetry(tUnit);
   teleEls.rs.textContent = fmtLen(rsKm);
   const aS = spinA(), rp = kerrRPlus(aS);
   setTele('spin', `${P.spinA.toFixed(3)} · ${rp.toFixed(3)} rₛ`);
@@ -966,6 +984,7 @@ $('#timeline').addEventListener('click', e => {
   else if(a === 'slower') changeSpeed(-1);
   else if(a === 'faster') changeSpeed(1);
   else if(a === 'step'){ P.playing = false; stepTime(1); syncUI(); }
+  else if(a === 'flash') triggerFlash();
 });
 
 const keys = new Set();
@@ -990,6 +1009,7 @@ addEventListener('keydown', e => {
     case '4': applyPreset('close'); break;
     case '5': applyPreset('eht'); break;
     case 'g': P.guides = !P.guides; syncUI(); break;
+    case 'x': triggerFlash(); break;
     case 'd': toggleProbe(); break;
     case 't': setInspectMode(!insp.mode); break;
     case 'o': { const m = ['static', 'orbit', 'fall', 'boost']; P.observer = m[(m.indexOf(P.observer) + 1) % m.length]; onParam('observer'); break; }
@@ -1026,6 +1046,7 @@ $('#info').addEventListener('click', e => { if(e.target.id === 'info') $('#info'
 let toastTimer = 0;
 function toast(msg){
   const t = $('#toast');
+  if(!t) return;
   t.textContent = msg; t.classList.add('on');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.classList.remove('on'), 2600);
@@ -1154,7 +1175,7 @@ function traceRay(px, py){
   let Lz = camE * Z.varpi * dot3(n, ep);
   if(Math.abs(Lz) < 2e-3) Lz = 0;                          // through the axis, as in the shader
   const q = pth * pth + cs * cs * (Lz * Lz / Math.max(sn * sn, 1e-8) - a * a);
-  y = [y[0], y[1], y[2], pr, pth];
+  y = [y[0], y[1], y[2], pr, pth, 0];   // y[5] = coordinate time (decreases going back)
 
   const capture = kerrRPlus(aT) + 0.02;
   const esc = Math.max(cam.dist * 1.05 + 2, P.diskOut * 1.4, 28);
@@ -1187,7 +1208,8 @@ function traceRay(px, py){
       const t = cs0 / (cs0 - cs1), rh = y0[0] + (y[0] - y0[0]) * t, phh = y0[2] + (y[2] - y0[2]) * t;
       const hp = blToCart(rh, Math.PI / 2, phh, a);
       hits.push({ p: hp, r: rh, inDisk: P.diskOn && rh >= P.diskIn * 0.9 && rh <= P.diskOut, order: hits.length + 1,
-                  far: dot3(hp, B.pos) < 0 });
+                  far: dot3(hp, B.pos) < 0, travel: -(y0[5] + (y[5] - y0[5]) * t),
+                  straight: Math.hypot(...sub(hp, B.pos)) });
     }
     if(P.planetOn && pl && sl > 1e-9){
       const tt = Math.min(1, Math.max(0, dot3(sub(pl.p, cPrev), seg) / (sl * sl)));
@@ -1289,6 +1311,7 @@ function describe(R){
     if(first.order === 1 && first.far) txt += 'That gas is on the far side of the hole: gravity bent the ray over the shadow to reach it. ';
     else if(first.order === 1) txt += 'That gas is on the near side, seen almost directly. ';
     else if(first.order === 2) txt += 'The ray had already crossed the disk plane once, through the empty gap, so this image is flipped and squeezed. ';
+    if(first.travel - first.straight > 1) txt += `Its light took ${(first.travel - first.straight).toFixed(1)} rₛ/c longer than a straight path, so a flare here shows up late in this image. `;
     else if(first.order >= 3) txt += 'Light this deep circled the hole before escaping. Images like this stack up into the thin photon ring. ';
     if(R.outcome === 'horizon') txt += 'The rest of the ray falls into the horizon.';
     else if(first.order === 1) txt += 'The disk is translucent, so later crossings add a little light.';
@@ -1316,7 +1339,7 @@ function describe(R){
 function updateInspectorPanel(R){
   drawDiagram(R);
   const out = { horizon: 'CAPTURED · HORIZON', escaped: 'ESCAPED · SKY', probe: 'HIT · PROBE', lost: 'TRAPPED' }[R.outcome];
-  const inDisk = R.hits.filter(h => h.inDisk);
+  const inDisk = R.hits.filter(h => h.inDisk), firstHit = inDisk[0];
   const rows = [
     ['OUTCOME', out, R.outcome !== 'escaped'],
     ['IMPACT b', R.b.toFixed(3) + ' rₛ', R.planar && Math.abs(R.b - B_CRIT) < 0.06],
@@ -1326,6 +1349,8 @@ function updateInspectorPanel(R){
     ['TOTAL BEND', (R.bend * 180 / Math.PI).toFixed(1) + '°' + (R.bend > Math.PI ? ' · ' + (R.bend / (2 * Math.PI)).toFixed(2) + ' turns' : '')],
     ['NET DEFLECTION', R.outcome === 'escaped' ? R.defl.toFixed(2) + '°' : '—'],
     ['DISK HITS', inDisk.length ? inDisk.slice(0, 3).map(h => '#' + h.order + ' r ' + h.r.toFixed(1)).join(' · ') : 'NONE', inDisk.length > 0],
+    ['LIGHT TRAVEL', firstHit ? firstHit.travel.toFixed(2) + ' rₛ/c' : '—', !!firstHit],
+    ['EXTRA vs STRAIGHT', firstHit ? '+' + (firstHit.travel - firstHit.straight).toFixed(2) + ' rₛ/c' : '—'],
     ['STEPS', String(R.path.length)],
   ];
   $('#rayStats').innerHTML = rows.map(([k, v, hl]) => `<dt>${k}</dt><dd${hl ? ' class="hl"' : ''}>${v}</dd>`).join('');
@@ -1385,6 +1410,29 @@ function updateMarkers(dt){
 }
 
 /* ================================================================== */
+/* Flares and light echoes                                             */
+/* ================================================================== */
+/* A flare is emitted at the current simulation time from a hot spot on
+   the far side of the hole (or the whole disk). Every ray carries its own
+   light travel time, so each image of the flare (direct, lensed over the
+   shadow, around the photon ring) lights up at a different moment. */
+function triggerFlash(){
+  const pos = cameraBasis().pos, phc = Math.atan2(pos[2], pos[0]);
+  flare = {
+    on: true, t: simTime, mode: P.flareMode === 'disk' ? 1 : 0,
+    r: Math.max(P.flareR, P.diskIn * 1.05),
+    phi: phc + Math.PI + (Math.random() - 0.5) * 1.2,   // roughly behind the hole
+  };
+  P.diskOn = true;
+  if(!P.playing) P.playing = true;
+  // echoes arrive a few r_s/c apart: slow the clock so they can be seen
+  const slowed = Math.abs(P.speed) > 0.25;
+  if(slowed) P.speed = 0.25;
+  syncUI();
+  toast(slowed ? 'FLARE · TIME SLOWED TO ×0.25 · WATCH FOR ECHOES' : 'FLARE · WATCH FOR ITS ECHOES');
+}
+
+/* ================================================================== */
 /* Main loop                                                           */
 /* ================================================================== */
 let last = performance.now();
@@ -1393,6 +1441,7 @@ function frame(now){
   last = now;
 
   const dSim = P.playing ? dt * P.speed * BASE_RATE : 0;
+  if(flare.on && Math.abs(simTime - flare.t) > 200) flare.on = false;
   simTime += dSim;
   moveObserver(dSim);
 
@@ -1441,7 +1490,7 @@ window.EventHorizon = {
   preset: applyPreset,
   snapCamera(){ clampGoal(); Object.assign(cam, goal); },
   togglePanel, toggleHUD, snapshot, toggleRecording,
-  releaseProbe, resetProbe,
+  releaseProbe, resetProbe, flash: () => triggerFlash(),
   kerr: { rPlus: () => kerrRPlus(spinA()), isco: s => kerrIsco(spinA(), s || 1), photonOrbit: s => kerrPhoton(spinA(), s || 1) },
   inspect(x, y){ if(!insp.mode) setInspectMode(true); inspectAt(x, y); return insp.res; },
   closeInspector(){ setInspectMode(false); },

@@ -55,6 +55,10 @@ uniform float uPhRetro;
 uniform float uIsco;
 uniform float uThick;       // disk scale height H/R; 0 = infinitely thin sheet
 uniform float uHaze;        // weight of the broad, optically thin envelope
+uniform float uDelayRef;    // travel time subtracted so "now" is roughly the direct-view time
+uniform vec4  uFlare;       // emission time t_f, orbit radius, azimuth at t_f, mode (0 spot, 1 whole disk)
+uniform float uFlareOn;
+uniform float uFlareBright;
 
 uniform vec3  uObsBeta;     // observer velocity relative to a local static observer (units of c)
 uniform float uObsBeam;     // apply observer Doppler beaming to the image
@@ -139,8 +143,8 @@ float diskLayerV(float r, float ang, float zn, float seed){
    phi, and its column density (out dens). zn = z/H is the height in scale
    heights (volume only). b is the photon's axial angular momentum p_phi, camE
    its energy in the camera's zero-angular-momentum frame. */
-vec3 diskSource(float r, float phi, float zn, float b, float camE, bool thick, out float dens){
-  dens = 0.0;
+vec3 diskSource(float r, float phi, float zn, float b, float camE, bool thick, float te, out float dens, out float flare){
+  dens = 0.0; flare = 0.0;
   float rIn = uDiskIn;
   if(r > uDiskOut || (!thick && r < rIn * 0.8) || (thick && r < uRCapture)) return vec3(0.0);
   float x = (r - rIn) / (uDiskOut - rIn);
@@ -157,7 +161,7 @@ vec3 diskSource(float r, float phi, float zn, float b, float camE, bool thick, o
 
   /* flow-map style: two phase-shifted layers so differential shear never winds up */
   const float P = 140.0;
-  float t1 = mod(uTime, P), t2 = mod(uTime + 0.5 * P, P);
+  float t1 = mod(te, P), t2 = mod(te + 0.5 * P, P);
   float w1 = 1.0 - abs(2.0 * t1 / P - 1.0);
   float n = thick
     ? diskLayerV(r, phi - omega * t1, zn, 0.0) * w1 + diskLayerV(r, phi - omega * t2, zn, 7.31) * (1.0 - w1)
@@ -189,16 +193,37 @@ vec3 diskSource(float r, float phi, float zn, float b, float camE, bool thick, o
 
   vec3 hue = uPalette > 0.5 ? blackbody(uDiskTemp * f * g) : cineRamp(f * g);
   float streak = mix(1.0, 0.3 + 1.2 * tex, uTurb);
+  /* flare: a short-lived hot spot riding the flow (or the whole disk at once),
+     seen at the time its light left: te = now − travel time */
+  if(uFlareOn > 0.5){
+    float age = te - uFlare.x;
+    if(age > 0.0 && age < 40.0){
+      float env = smoothstep(0.0, 0.5, age) * exp(-age / 2.5);
+      float spot = 1.0;
+      if(uFlare.w < 0.5){
+        float rf = uFlare.y, rf15 = rf * sqrt(rf);
+        float omF = uSpin * sqM / (rf15 + uSpin * a * sqM);
+        float dph = mod(phi - (uFlare.z + omF * age) + PI, 2.0 * PI) - PI;
+        float dr = r - rf, arc = rf * dph;
+        spot = exp(-(dr * dr + arc * arc) / (2.0 * 0.45 * 0.45));
+      } else {
+        spot = outer * (thick ? max(inner, 0.0) : inner);
+      }
+      flare = uFlareBright * env * spot * min(g4, 60.0);
+    }
+  }
   return hue * uDiskBright * (0.15 + f * f) * g4 * 2.2 * streak;
 }
+const vec3 FLARE_COLOR = vec3(0.78, 0.9, 1.0);
 
 /* Thin sheet: emission (premultiplied rgb) + opacity at the equatorial crossing.
    d is the (backward) ray direction in scene space. */
-vec4 diskSample(float r, float phi, vec3 d, float b, float camE){
-  float dens;
-  vec3 S = diskSource(r, phi, 0.0, b, camE, false, dens);
+vec4 diskSample(float r, float phi, vec3 d, float b, float camE, float te){
+  float dens, flare;
+  vec3 S = diskSource(r, phi, 0.0, b, camE, false, te, dens, flare);
   float alpha = 1.0 - exp(-dens * uDiskOpacity / max(abs(d.y), 0.06));
-  return vec4(S * alpha, alpha);
+  alpha = max(alpha, min(flare, 0.9));
+  return vec4(S * alpha + FLARE_COLOR * flare, alpha);
 }
 
 /* Thick flow: scale height H = uThick · R. Vertical profile is a Gaussian
@@ -208,16 +233,17 @@ vec4 diskSample(float r, float phi, vec3 d, float b, float camE){
    so the shadow shows through the glow. Returns emission and absorption for
    a path element ds at (r, θ, φ). */
 const float THICK_ABSORB = 0.3;
-vec4 diskVolume(float r, float th, float ph, float ds, float b, float camE){
+vec4 diskVolume(float r, float th, float ph, float ds, float b, float camE, float te){
   float Rc = sqrt(r * r + uA * uA) * sin(th), z = r * cos(th);
   float H = uThick * max(Rc, uDiskIn * 0.6);
   float zn = z / H;
   float v = exp(-0.5 * zn * zn) + uHaze * 0.5 * exp(-0.125 * zn * zn);
   if(v < 1e-3) return vec4(0.0);
-  float dens;
-  vec3 S = diskSource(r, ph, zn, b, camE, true, dens);
-  float dtau = uDiskOpacity * dens * v * ds / (2.5066 * H * (1.0 + uHaze));
-  return vec4(S * (1.0 - exp(-dtau)), 1.0 - exp(-dtau * THICK_ABSORB));
+  float dens, flare;
+  vec3 S = diskSource(r, ph, zn, b, camE, true, te, dens, flare);
+  float col = ds / (2.5066 * H * (1.0 + uHaze));
+  float dtau = uDiskOpacity * dens * v * col;
+  return vec4(S * (1.0 - exp(-dtau)) + FLARE_COLOR * flare * exp(-0.5 * zn * zn) * col, 1.0 - exp(-dtau * THICK_ABSORB));
 }
 
 /* Equatorial reference grid: 1 r_s rings, 30° spokes, photon orbits, ISCO */
@@ -324,7 +350,7 @@ vec3 cartToBL(vec3 p){
 }
 
 /* dX = (dr, dθ, dφ)/dζ, dP = (dp_r, dp_θ)/dζ */
-void kerrRHS(float r, float th, float pr, float pth, float b, float q, out vec3 dX, out vec2 dP){
+void kerrRHS(float r, float th, float pr, float pth, float b, float q, out vec3 dX, out vec2 dP, out float dT){
   float M = uM, a = uA, a2 = a * a;
   float sn = max(sin(th), 1e-4), cs = cos(th);
   float sn2 = sn * sn, cs2 = cs * cs;
@@ -336,6 +362,8 @@ void kerrRHS(float r, float th, float pr, float pth, float b, float q, out vec3 
   float Th = q - cs2 * (b * b / sn2 - a2);
 
   dX = vec3(Dl * ir2 * pr, pth * ir2, (a * Pp / Dc + (b - a) + b * cs2 / sn2) * ir2);
+  /* coordinate time: ρ² dt/dζ = (r² + a²)P/Δ − a(a sin²θ − b) */
+  dT = ((r * r + a2) * Pp / Dc - a * (a * sn2 - b)) * ir2;
 
   float dD = 2.0 * r - 2.0 * M;
   float dR = 4.0 * r * Pp - dD * K;
@@ -353,17 +381,18 @@ void kerrRHS(float r, float th, float pr, float pth, float b, float q, out vec3 
             -(dAt * pr * pr + dBt * pth * pth - dCt));
 }
 
-void kerrStep(inout vec3 X, inout vec2 Pm, float b, float q, float h){
-  vec3 k1x, k2x, k3x, k4x; vec2 k1p, k2p, k3p, k4p;
-  kerrRHS(X.x, X.y, Pm.x, Pm.y, b, q, k1x, k1p);
+void kerrStep(inout vec3 X, inout vec2 Pm, inout float T, float b, float q, float h){
+  vec3 k1x, k2x, k3x, k4x; vec2 k1p, k2p, k3p, k4p; float k1t, k2t, k3t, k4t;
+  kerrRHS(X.x, X.y, Pm.x, Pm.y, b, q, k1x, k1p, k1t);
   vec3 X2 = X + 0.5 * h * k1x; vec2 P2 = Pm + 0.5 * h * k1p;
-  kerrRHS(X2.x, X2.y, P2.x, P2.y, b, q, k2x, k2p);
+  kerrRHS(X2.x, X2.y, P2.x, P2.y, b, q, k2x, k2p, k2t);
   vec3 X3 = X + 0.5 * h * k2x; vec2 P3 = Pm + 0.5 * h * k2p;
-  kerrRHS(X3.x, X3.y, P3.x, P3.y, b, q, k3x, k3p);
+  kerrRHS(X3.x, X3.y, P3.x, P3.y, b, q, k3x, k3p, k3t);
   vec3 X4 = X + h * k3x; vec2 P4 = Pm + h * k3p;
-  kerrRHS(X4.x, X4.y, P4.x, P4.y, b, q, k4x, k4p);
+  kerrRHS(X4.x, X4.y, P4.x, P4.y, b, q, k4x, k4p, k4t);
   X += h / 6.0 * (k1x + 2.0 * k2x + 2.0 * k3x + k4x);
   Pm += h / 6.0 * (k1p + 2.0 * k2p + 2.0 * k3p + k4p);
+  T -= h / 6.0 * (k1t + 2.0 * k2t + 2.0 * k3t + k4t);   // h < 0: light travel time grows
   /* a ray through the axis comes out on the other side */
   if(X.y < 0.0){ X.y = -X.y; X.z += PI; Pm.y = -Pm.y; }
   else if(X.y > PI){ X.y = 2.0 * PI - X.y; X.z += PI; Pm.y = -Pm.y; }
@@ -417,7 +446,7 @@ void main(){
   float q = Pm.y * Pm.y + cs * cs * (b * b / max(sn * sn, 1e-8) - a2);
 
   vec3 col = vec3(0.0);
-  float alpha = 0.0;
+  float alpha = 0.0, T = 0.0;     // T: light travel time (coordinate time) back from the camera
   bool captured = false, escaped = false;
   vec3 cPrev = blToCart(X.x, X.y, X.z), dirOut = rd;
 
@@ -434,6 +463,7 @@ void main(){
     if(X.x < uRCapture){ captured = true; break; }
 
     vec3 X0 = X;
+    float T0 = T;
     /* adaptive step: proportional to r, but never moving r more than a quarter
        of the way to the horizon (p_r grows like 1/Δ there), and finer near the
        axis where the θ equation stiffens */
@@ -454,7 +484,7 @@ void main(){
       h = min(h, 0.3 * snA * (X.x * X.x + a2 * cos(X.y) * cos(X.y)) / max(w, 1e-6));
     }
     h = -h;
-    kerrStep(X, Pm, b, q, h);
+    kerrStep(X, Pm, T, b, q, h);
     if(!(X.x > 0.0) || !(abs(Pm.x) < 1e8) || !(abs(Pm.y) < 1e8) || !(abs(X.z) < 1e6)){ captured = true; break; }
     vec3 c1 = blToCart(X.x, X.y, X.z);
     vec3 seg = c1 - cPrev;
@@ -480,7 +510,7 @@ void main(){
       float rh = mix(X0.x, X.x, tDisk), ph = mix(X0.z, X.z, tDisk);
       if(uGuides > 0.5) col += (1.0 - alpha * 0.8) * guides(rh, ph, rCam);
       if(uDiskOn > 0.5 && !thick){
-        vec4 sm = diskSample(rh, ph, dirOut, b, camE);
+        vec4 sm = diskSample(rh, ph, dirOut, b, camE, uTime - (mix(T0, T, tDisk) - uDelayRef));
         col += (1.0 - alpha) * sm.rgb;
         alpha += (1.0 - alpha) * sm.a;
       }
@@ -490,7 +520,8 @@ void main(){
       float span = min(1.0, tPlan), dsh = 0.5 * length(seg) * span;
       for(int k = 0; k < 2; k++){
         float ts = (float(k) + jitter) * 0.5 * span;
-        vec4 sm = diskVolume(mix(X0.x, X.x, ts), mix(X0.y, X.y, ts), mix(X0.z, X.z, ts), dsh, b, camE);
+        vec4 sm = diskVolume(mix(X0.x, X.x, ts), mix(X0.y, X.y, ts), mix(X0.z, X.z, ts), dsh, b, camE,
+                             uTime - (mix(T0, T, ts) - uDelayRef));
         col += (1.0 - alpha) * sm.rgb;
         alpha += (1.0 - alpha) * sm.a;
       }
