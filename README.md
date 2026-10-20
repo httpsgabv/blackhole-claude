@@ -259,6 +259,29 @@ What you see depends on how you move. The camera can **hover**, ride a **circula
 
 <br>
 
+### See its anatomy &nbsp;<sub><code>A</code></sub>
+
+<p align="center">
+  <img src="docs/media/anatomy.jpg" alt="Isometric anatomy figure: the spinning black hole as a bench instrument" width="100%">
+</p>
+<p align="center">
+  <img src="docs/media/anatomy.gif" alt="Anatomy figure as the spin rises: the horizon shrinks, the ISCO and rings move inward" width="100%">
+</p>
+
+The **Anatomy** view explains the hole as a physical instrument rather than a picture. It's an isometric SVG figure in the style of the [Anatomy](https://aiuxplayground.com/skills/anatomy) design approach: solid parts, shaded faces, calm motion, and a framed card with a live readout. Every part is driven by the simulation's own Kerr model:
+
+| Part | What it is |
+|:--|:--|
+| Dark ball | The horizon, r₊ |
+| Recessed well | The ergosphere: its edge is 1 rₛ at the equator |
+| Concentric rings | The disk: each ring turns at its own orbital speed, inner edge locked to the ISCO, tinted by its temperature |
+| Bright bead | Gas on the ISCO, the one lit part |
+| Engraved cyan grooves | Photon orbits, with and against the spin |
+| Vane on the axle | Frame dragging (turn rate ×8 for visibility) |
+| Crown · dial · ruler | Set the spin · read a/M · sliders mark r₊ and the ISCO |
+
+Drag sideways or press ← → to change the spin; the WebGL renderer pauses while the figure is open.
+
 ## `03` &nbsp;INTERFACE
 
 <p align="center">
@@ -389,6 +412,7 @@ Every astrophysical hole is far colder than the 2.7 K microwave background. The 
 | | | | `X` | flash (flare + echoes) |
 | | | | `J` | jets on / off |
 | | | | `B` · `W` | binary · wormhole scene |
+| | | | `A` | anatomy view |
 | | | | `U` | pulsar on / off |
 | | | | `O` | cycle observer mode |
 | | | | `P` | PNG snapshot |
@@ -474,6 +498,7 @@ EventHorizon.snapshot();
 index.html        HUD markup, field notes
 css/style.css     interface
 js/shaders.js     Kerr, binary and wormhole tracers, disk, jets, pulsar, skies, bloom, tone mapping (GLSL ES 3.0)
+js/anatomy.js     the anatomy figure: isometric SVG kit, parts, card, interaction
 js/main.js        render graph, Kerr helpers, scenes (binary, wormhole, pulsar), camera, observers, probe, inspector, UI, export
 docs/             README media
 ```

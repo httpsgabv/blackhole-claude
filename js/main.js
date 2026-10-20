@@ -55,6 +55,7 @@ const P = {
 const cam = { dist: 40, yaw: -0.9, pitch: 0.35, roll: -14, shiftX: 0.14, shiftY: 0.02, fov: 42 };
 const goal = Object.assign({}, cam, PRESETS.gargantua);
 let simTime = 0;
+let renderPaused = false;   // true while a full-screen view (the anatomy figure) covers the canvas
 /* flare: emitted at coordinate time t from (r, φ) on the disk; mode 1 = whole disk */
 let flare = { on: false, t: 0, r: 4, phi: 0, mode: 0 };
 
@@ -1217,6 +1218,7 @@ $('#timeline').addEventListener('click', e => {
 const keys = new Set();
 addEventListener('keydown', e => {
   if(e.ctrlKey || e.metaKey || e.altKey) return;
+  if(document.body.classList.contains('anatomy-open')) return;   // the anatomy figure has the keyboard
   const tag = document.activeElement && document.activeElement.tagName;
   const onRange = tag === 'INPUT';
   const k = e.key;
@@ -1696,7 +1698,7 @@ function frame(now){
     if(!Number.isFinite(cam[k])) cam[k] = goal[k];
   }
 
-  render();
+  if(!renderPaused) render();
   if(snapPending){ snapPending = false; doSnapshot(); }
   updateMarkers(dt);
   updateAudio(lastBinary);
@@ -1725,6 +1727,8 @@ window.EventHorizon = {
   snapCamera(){ clampGoal(); Object.assign(cam, goal); },
   togglePanel, toggleHUD, snapshot, toggleRecording,
   releaseProbe, resetProbe, flash: () => triggerFlash(),
+  model: { KM, kerrRPlus, kerrIsco, kerrPhoton, kerrOrbit, zamo },
+  pauseRender(on){ renderPaused = !!on; },
   scene: n => setScene(n), restartBinary, travelThrough, binary: () => binaryState(), pulsar: () => pulsarState(),
   wormhole(L){ worm.travel = null; worm.side = L < 0 ? -1 : 1; cam.dist = goal.dist = Math.max(Math.abs(L), 0.02); },
   kerr: { rPlus: () => kerrRPlus(spinA()), isco: s => kerrIsco(spinA(), s || 1), photonOrbit: s => kerrPhoton(spinA(), s || 1) },
