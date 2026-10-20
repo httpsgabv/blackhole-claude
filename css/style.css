@@ -142,6 +142,10 @@ input[type=range]::-moz-range-thumb{width:8px;height:8px;border-radius:0;backgro
 .seg button:first-child{border-left:0}
 .seg button:hover{color:var(--fg)}
 .seg button.on{color:var(--accent);background:var(--accent-bg)}
+.seg.cols3{display:grid;grid-template-columns:repeat(3,1fr)}
+.seg.cols3 button{border-left:1px solid var(--line);border-top:1px solid var(--line)}
+.seg.cols3 button:nth-child(3n+1){border-left:0}
+.seg.cols3 button:nth-child(-n+3){border-top:0}
 
 .btns{display:grid;grid-template-columns:1fr 1fr;gap:6px}
 .btn{padding:8px 6px;border:1px solid var(--line2);font-size:9px;letter-spacing:.16em;color:var(--fg);text-transform:uppercase;display:flex;align-items:center;justify-content:center;gap:8px;transition:color .15s,border-color .15s,background .15s}

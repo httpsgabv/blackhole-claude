@@ -21,6 +21,8 @@ const QUALITY = {
   ultra: { k: 0.028, steps: 1000 },
 };
 const MASSES = {
+  primordial: { m: 5.03e-19, label: 'Primordial · 10¹² kg' },
+  earth:     { m: 3.003e-6, label: 'Earth mass · 6×10²⁴ kg' },
   stellar:   { m: 10,    label: 'Stellar black hole · 10 M☉' },
   sgra:      { m: 4.3e6, label: 'Sagittarius A* · 4.3×10⁶ M☉' },
   gargantua: { m: 1e8,   label: 'Gargantua-class · 10⁸ M☉' },
@@ -40,6 +42,7 @@ const P = {
   diskOn: true, palette: 'cinematic', diskIn: 3, diskOut: 13, diskTemp: 6500, diskBright: 0.55,
   turb: 0.7, opacity: 1.4, spin: 1,
   fov: 42, roll: -14, autoOrbit: false, orbitSpeed: 0.04,
+  observer: 'static', obsBeta: 0.5, obsMove: true, obsBeam: true,
   scale: 0.75, quality: 'med', bloom: 1.3, exposure: 1.05, vignette: 0.6, grain: true,
   recRes: 'viewport', recDur: 10, recFps: 60,
 };
@@ -276,6 +279,96 @@ function planetPos(){
 }
 
 /* ================================================================== */
+/* Observer modes                                                      */
+/* ================================================================== */
+/* The camera can hover (static), ride a circular geodesic, fall freely from
+   rest at infinity, or take a forward boost. Its velocity is measured by a
+   local static observer; the shader turns it into aberration (light from
+   ahead bunches up) and a Doppler factor D (ahead brighter and bluer). */
+const obs = { dir: null, state: null };
+const dot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+
+const camPosOf = c => {
+  const cp = Math.cos(c.pitch);
+  return [c.dist * cp * Math.sin(c.yaw), c.dist * Math.sin(c.pitch), c.dist * cp * Math.cos(c.yaw)];
+};
+function setCamPos(c, p){
+  const r = Math.hypot(p[0], p[1], p[2]);
+  let yaw = Math.atan2(p[0], p[2]);
+  yaw += Math.round((c.yaw - yaw) / (2 * Math.PI)) * 2 * Math.PI;   // stay continuous
+  c.yaw = yaw;
+  c.pitch = Math.asin(Math.max(-1, Math.min(1, p[1] / r)));
+  c.dist = r;
+}
+function rotateAbout(v, a, ang){   // Rodrigues, a is a unit axis
+  const c = Math.cos(ang), s = Math.sin(ang), d = dot3(a, v), x = cross(a, v);
+  return [0, 1, 2].map(i => v[i] * c + x[i] * s + a[i] * d * (1 - c));
+}
+/* prograde horizontal tangent, same sense as the disk's rotation */
+function horizontalTangent(pos){
+  const l = Math.hypot(pos[0], pos[2]);
+  return l < 1e-6 ? [P.spin, 0, 0] : [-pos[2] / l * P.spin, 0, pos[0] / l * P.spin];
+}
+
+/* camera-frame viewing direction -> static-frame direction (as in the shader) */
+function toStatic(d, v){
+  const b2 = dot3(v, v);
+  if(b2 < 1e-8) return d;
+  const g = 1 / Math.sqrt(1 - b2), bh = scl(v, 1 / Math.sqrt(b2));
+  return norm(sub(add(d, scl(bh, (g - 1) * dot3(d, bh))), scl(v, g)));
+}
+/* inverse: static-frame direction -> where the moving camera sees it */
+function toCamera(s, v){
+  const b2 = dot3(v, v);
+  if(b2 < 1e-8) return s;
+  const g = 1 / Math.sqrt(1 - b2), bh = scl(v, 1 / Math.sqrt(b2));
+  return norm(add(add(s, scl(bh, (g - 1) * dot3(s, bh))), scl(v, g)));
+}
+
+function observerState(){
+  const r = cam.dist, pos = camPosOf(cam), rh = scl(pos, 1 / r);
+  const still = Math.sqrt(Math.max(0, 1 - 1 / r));
+  if(P.observer === 'orbit'){
+    // keep the direction of motion tangent to the sphere; it survives user drags
+    let dir = obs.dir || horizontalTangent(pos);
+    dir = sub(dir, scl(rh, dot3(dir, rh)));
+    const l = Math.hypot(dir[0], dir[1], dir[2]);
+    dir = l < 1e-6 ? horizontalTangent(pos) : scl(dir, 1 / l);
+    obs.dir = dir;
+    const ok = r > 1.5;
+    const b = ok ? Math.min(Math.sqrt(0.5 / (r - 1)), 0.995) : 0.995;   // local orbital speed
+    return { v: scl(dir, b), b, clock: ok ? Math.sqrt(1 - 1.5 / r) : 0, note: !ok ? 'NO ORBIT' : r < 3 ? 'UNSTABLE' : '' };
+  }
+  if(P.observer === 'fall'){
+    const b = Math.min(Math.sqrt(1 / r), 0.995);                         // from rest at infinity
+    return { v: scl(rh, -b), b, clock: Math.max(0, 1 - 1 / r), note: r <= DIST_MIN + 1e-3 ? 'LIMIT' : '' };
+  }
+  if(P.observer === 'boost'){
+    const m = cameraBasis().m, b = P.obsBeta;
+    return { v: [m[6] * b, m[7] * b, m[8] * b], b, clock: still * Math.sqrt(1 - b * b), note: '' };
+  }
+  return { v: [0, 0, 0], b: 0, clock: still, note: '' };
+}
+
+/* advance the camera along its worldline by dSim of coordinate time */
+function moveObserver(dSim){
+  if(!P.obsMove || !dSim) return;
+  if(P.observer === 'orbit' && obs.dir && cam.dist > 1.5){
+    const axis = norm(cross(camPosOf(cam), obs.dir));
+    for(const c of [cam, goal]){
+      const w = Math.sqrt(0.5 / Math.pow(c.dist, 3));                    // Ω = √(M/r³)
+      setCamPos(c, rotateAbout(camPosOf(c), axis, w * dSim));
+    }
+    obs.dir = rotateAbout(obs.dir, axis, Math.sqrt(0.5 / Math.pow(cam.dist, 3)) * dSim);
+  } else if(P.observer === 'fall'){
+    for(const c of [cam, goal]){
+      const r = c.dist;
+      c.dist = Math.min(DIST_MAX, Math.max(DIST_MIN, r - (1 - 1 / r) * Math.sqrt(1 / r) * dSim));   // dr/dt
+    }
+  }
+}
+
+/* ================================================================== */
 /* Render                                                              */
 /* ================================================================== */
 const SKY = { stars: 0, grid: 1, void: 2 };
@@ -302,6 +395,10 @@ function render(){
   u3f(pr, 'uCamPos', B.pos);
   gl.uniformMatrix3fv(loc(pr, 'uCamRot'), false, B.m);
   u1f(pr, 'uTanFov', Math.tan(cam.fov * Math.PI / 360));
+  const ob = obs.state = observerState();
+  u3f(pr, 'uObsBeta', ob.v);
+  u1f(pr, 'uObsBeam', P.obsBeam ? 1 : 0);
+  u1f(pr, 'uObsExpo', Math.pow((1 - ob.b) / (1 + ob.b), 1.5));   // 1 / D_max³
   u1f(pr, 'uGravity', P.gravity);
   u1f(pr, 'uEscape', Math.max(rCam * 1.05 + 2, P.diskOut * 1.4, 28));
   u1f(pr, 'uStepK', q.k);
@@ -384,8 +481,9 @@ const SECTIONS = [
   { id: 'sim', title: 'Simulation', items: [
     { t: 'range', k: 'speed', label: 'Time rate', min: -4, max: 4, step: 0.05, fmt: v => '×' + v.toFixed(2),
       hint: 'Negative values run the clock backwards.' },
-    { t: 'seg', k: 'mass', label: 'Mass scale', opts: [['stellar', '10 M☉'], ['sgra', 'SGR A*'], ['gargantua', '10⁸ M☉'], ['m87', 'M87*']],
-      hint: 'Sets physical units only. Geometry is scale-free.' },
+    { t: 'seg', k: 'mass', label: 'Mass scale', cols: 3,
+      opts: [['primordial', '10¹² KG'], ['earth', 'EARTH'], ['stellar', '10 M☉'], ['sgra', 'SGR A*'], ['gargantua', '10⁸ M☉'], ['m87', 'M87*']],
+      hint: 'Sets physical units and the Hawking temperature. The geometry is scale-free.' },
     { t: 'toggle', k: 'planetOn', label: 'Orbiting probe' },
     { t: 'range', k: 'planetR', label: 'Orbit radius', min: 2, max: 18, step: 0.1, fmt: v => v.toFixed(1) + ' rₛ', dep: 'planetOn',
       hint: 'Circular orbits below 3 rₛ (ISCO) are unstable.' },
@@ -421,6 +519,12 @@ const SECTIONS = [
                             ['Polar', () => applyPreset('top')], ['Close pass', () => applyPreset('close')]] },
     { t: 'range', k: 'fov', label: 'Field of view', min: 20, max: 120, step: 1, fmt: v => v + '°' },
     { t: 'range', k: 'roll', label: 'Roll', min: -60, max: 60, step: 1, fmt: v => v + '°' },
+    { t: 'seg', k: 'observer', label: 'Observer', opts: [['static', 'STATIC'], ['orbit', 'ORBIT'], ['fall', 'FREE FALL'], ['boost', 'BOOST']],
+      hint: 'Static hovers in place. Orbit rides a circular orbit (0.5c at 3 rₛ). Free fall drops from rest at infinity. Boost moves toward the view at a set speed.' },
+    { t: 'range', k: 'obsBeta', label: 'Boost speed', min: 0, max: 0.95, step: 0.01, fmt: v => v.toFixed(2) + ' c', dep: () => P.observer === 'boost' },
+    { t: 'toggle', k: 'obsMove', label: 'Follow trajectory', dep: () => P.observer === 'orbit' || P.observer === 'fall' },
+    { t: 'toggle', k: 'obsBeam', label: 'Observer beaming', dep: () => P.observer !== 'static' },
+    { t: 'note', text: 'Beaming scales brightness by D⁴ (D = Doppler factor), then auto-exposes for the brightest direction, as a real camera would.' },
     { t: 'toggle', k: 'autoOrbit', label: 'Auto orbit' },
     { t: 'range', k: 'orbitSpeed', label: 'Orbit speed', min: -0.3, max: 0.3, step: 0.005, fmt: v => v.toFixed(3) + ' rad/s', dep: 'autoOrbit' },
   ]},
@@ -476,7 +580,7 @@ function buildItem(it){
     sw.onclick = () => { P[it.k] = !P[it.k]; ctrls[it.k].update(); onParam(it.k); };
     ctrls[it.k] = { row, dep: it.dep, update(){ sw.classList.toggle('on', !!P[it.k]); sw.setAttribute('aria-checked', !!P[it.k]); } };
   } else if(it.t === 'seg'){
-    row.innerHTML = `<div class="row-head"><span class="lbl">${it.label}</span></div><div class="seg"></div>` + (it.hint ? `<div class="hint">${it.hint}</div>` : '');
+    row.innerHTML = `<div class="row-head"><span class="lbl">${it.label}</span></div><div class="seg${it.cols ? ' cols' + it.cols : ''}"></div>` + (it.hint ? `<div class="hint">${it.hint}</div>` : '');
     const seg = row.querySelector('.seg');
     const bs = it.opts.map(([v, l]) => {
       const b = document.createElement('button');
@@ -498,7 +602,8 @@ function buildItem(it){
     });
   } else if(it.t === 'note'){
     row.className = 'row hint';
-    row.id = it.id;
+    if(it.id) row.id = it.id;
+    if(it.text) row.textContent = it.text;
   }
   return row;
 }
@@ -507,7 +612,7 @@ function syncUI(){
   for(const k in ctrls){
     const c = ctrls[k];
     c.update();
-    if(c.dep) c.row.classList.toggle('disabled', !P[c.dep]);
+    if(c.dep) c.row.classList.toggle('disabled', !(typeof c.dep === 'function' ? c.dep() : P[c.dep]));
   }
   $('#timeline').classList.toggle('playing', P.playing);
   $('#tlRate').textContent = '×' + P.speed.toFixed(2);
@@ -520,6 +625,7 @@ function syncUI(){
 }
 
 function onParam(k){
+  if(k === 'observer') obs.dir = null;
   if(k === 'planetR' && probe.falling) resetProbe();
   if(k === 'fov' || k === 'roll') goal[k] = P[k];
   if(k === 'diskIn' && P.diskOut < P.diskIn + 1){ P.diskOut = P.diskIn + 1; }
@@ -537,9 +643,9 @@ const DEFAULTS = Object.assign({}, P);
 /* Telemetry                                                           */
 /* ================================================================== */
 const TELE = [
-  ['R_CAM', 'rcam'], ['DISTANCE', 'rphys'], ['INCLINATION', 'incl'], ['CLOCK RATE', 'clock'],
+  ['R_CAM', 'rcam'], ['DISTANCE', 'rphys'], ['INCLINATION', 'incl'], ['OBSERVER', 'obs'], ['CLOCK RATE', 'clock'],
   ['ESCAPE V', 'vesc'], ['PROBE', 'pstate'], ['PROBE R', 'pr'], ['PROBE τ/t', 'probe'], ['PROBE τ', 'ptau'],
-  ['REDSHIFT g', 'pg'], ['TIDAL · 2 m', 'tidal'], ['R_S', 'rs'], ['FRAME', 'fps'],
+  ['REDSHIFT g', 'pg'], ['TIDAL · 2 m', 'tidal'], ['R_S', 'rs'], ['HAWKING T', 'hawk'], ['EVAPORATION', 'evap'], ['FRAME', 'fps'],
 ];
 const teleEls = {};
 (function(){
@@ -553,6 +659,8 @@ const teleEls = {};
 
 function fmtLen(km){
   const AU = 1.495978707e8, LY = 9.4607e12;
+  if(km < 1e-3) return fmtSci(km * 1e3) + ' m';
+  if(km < 1) return (km * 1e3).toPrecision(3) + ' m';
   if(km < 1e6) return km.toPrecision(3) + ' km';
   if(km < 0.5 * LY) return (km / AU).toPrecision(3) + ' AU';
   return (km / LY).toPrecision(3) + ' ly';
@@ -560,13 +668,15 @@ function fmtLen(km){
 function fmtDur(s){
   const a = Math.abs(s), sign = s < 0 ? '−' : '';
   if(a === 0) return '0 s';
+  if(a < 1e-6) return sign + fmtSci(a) + ' s';
   if(a < 1e-3) return sign + (a * 1e6).toFixed(1) + ' µs';
   if(a < 1) return sign + (a * 1e3).toFixed(1) + ' ms';
   if(a < 120) return sign + a.toFixed(1) + ' s';
   if(a < 7200) return sign + (a / 60).toFixed(1) + ' min';
   if(a < 172800) return sign + (a / 3600).toFixed(1) + ' h';
   if(a < 3.15576e7 * 2) return sign + (a / 86400).toFixed(1) + ' d';
-  return sign + (a / 3.15576e7).toFixed(2) + ' yr';
+  const yr = a / 3.15576e7;
+  return sign + (yr < 1e5 ? yr.toFixed(2) : fmtSci(yr)) + ' yr';
 }
 
 const G0 = 9.80665, C2 = 8.98755e16;
@@ -624,10 +734,17 @@ function updateTelemetry(dt){
   teleEls.rcam.textContent = r.toFixed(2) + ' rₛ';
   teleEls.rphys.textContent = fmtLen(r * rsKm);
   teleEls.incl.textContent = (90 - cam.pitch * 180 / Math.PI).toFixed(1) + '°';
-  teleEls.clock.textContent = Math.sqrt(Math.max(0, 1 - 1 / r)).toFixed(4) + '×';
+  const ob = obs.state || observerState();
+  const obsName = { static: 'STATIC', orbit: 'ORBIT', fall: 'FALL', boost: 'BOOST' }[P.observer];
+  setTele('obs', P.observer === 'static' ? obsName : `${obsName} ${ob.b.toFixed(3)}c${ob.note ? ' ' + ob.note : ''}`, !!ob.note);
+  teleEls.clock.textContent = ob.clock.toFixed(4) + '×';
   teleEls.vesc.textContent = Math.sqrt(1 / r).toFixed(3) + ' c';
   updateProbeTelemetry(rsKm, tUnit);
   teleEls.rs.textContent = fmtLen(rsKm);
+  // Hawking: T = ħc³ / (8πGMk_B) ≈ 6.17×10⁻⁸ K · (M☉/M);  t_evap ≈ 2.1×10⁶⁷ yr · (M/M☉)³
+  const TH = 6.169e-8 / m, tEvap = 2.1e67 * m * m * m;
+  setTele('hawk', fmtSci(TH) + ' K' + (TH < 2.725 ? ' · < CMB' : ''), TH > 1e6);
+  setTele('evap', tEvap < 1 ? fmtDur(tEvap * 3.15576e7) : fmtSci(tEvap) + ' yr' + (tEvap < 1.38e10 ? ' · < AGE OF UNIVERSE' : ''), tEvap < 1.38e10);
   teleEls.fps.textContent = Math.round(fpsAvg) + ' FPS · ' + Math.round(canvas.width * P.scale) + '×' + Math.round(canvas.height * P.scale);
 }
 
@@ -695,7 +812,7 @@ function changeSpeed(dir){
   if(next !== undefined) P.speed = next;
   syncUI();
 }
-function stepTime(sign = 1){ simTime += sign * (P.speed < 0 ? -1 : 1); }
+function stepTime(sign = 1){ const d = sign * (P.speed < 0 ? -1 : 1); simTime += d; moveObserver(d); }
 function togglePlay(){ P.playing = !P.playing; syncUI(); }
 
 $('#timeline').addEventListener('click', e => {
@@ -732,6 +849,7 @@ addEventListener('keydown', e => {
     case 'g': P.guides = !P.guides; syncUI(); break;
     case 'd': toggleProbe(); break;
     case 't': setInspectMode(!insp.mode); break;
+    case 'o': { const m = ['static', 'orbit', 'fall', 'boost']; P.observer = m[(m.indexOf(P.observer) + 1) % m.length]; onParam('observer'); break; }
     case 'h': toggleHUD(); break;
     case 'c': togglePanel(); break;
     case 'i': $('#info').hidden = !$('#info').hidden; break;
@@ -859,8 +977,6 @@ function tickRecUI(){
    hole, so this 2D slice shows the complete path. */
 const insp = { mode: false, x: 0, y: 0, has: false, zoom: 'wide', res: null, timer: 0 };
 const B_CRIT = 1.5 * Math.sqrt(3);   // critical impact parameter, 3√3/2 r_s
-const dot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-
 function viewRay(px, py, rect, B){
   const m = Math.min(rect.width, rect.height);
   const ux = (px - rect.width / 2) / m - cam.shiftX, uy = (rect.height / 2 - py) / m - cam.shiftY;
@@ -869,9 +985,9 @@ function viewRay(px, py, rect, B){
 }
 /* world point -> CSS pixel on the page (plain pinhole, no lensing) */
 function project(p, rect, B){
-  const v = sub(p, B.pos), M = B.m;
+  const v = toCamera(norm(sub(p, B.pos)), (obs.state || observerState()).v), M = B.m;
   const z = v[0] * M[6] + v[1] * M[7] + v[2] * M[8];
-  if(z < 0.05) return null;
+  if(z < 0.02) return null;
   const T = 2 * Math.tan(cam.fov * Math.PI / 360), m = Math.min(rect.width, rect.height);
   const ux = (v[0] * M[0] + v[1] * M[1] + v[2] * M[2]) / (z * T) + cam.shiftX;
   const uy = (v[0] * M[3] + v[1] * M[4] + v[2] * M[5]) / (z * T) + cam.shiftY;
@@ -880,7 +996,7 @@ function project(p, rect, B){
 
 function traceRay(px, py){
   const rect = canvas.getBoundingClientRect(), B = cameraBasis();
-  const d = viewRay(px, py, rect, B);
+  const d = toStatic(viewRay(px, py, rect, B), (obs.state || observerState()).v);
   let pos = B.pos.slice(), vel = d.slice();
   const hv = cross(pos, vel), b = Math.hypot(hv[0], hv[1], hv[2]);
   const k = -1.5 * b * b * P.gravity;
@@ -1101,7 +1217,9 @@ function frame(now){
   const dt = Math.min(0.1, Math.max(0, (now - last) / 1000));
   last = now;
 
-  if(P.playing) simTime += dt * P.speed * BASE_RATE;
+  const dSim = P.playing ? dt * P.speed * BASE_RATE : 0;
+  simTime += dSim;
+  moveObserver(dSim);
 
   // keyboard camera
   const kr = 1.4 * dt;

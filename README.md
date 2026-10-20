@@ -108,6 +108,29 @@ Release the orbiting probe and it follows a real free-fall path, solved with RK4
 
 Click any pixel to trace its light ray backwards. A light ray around a non-rotating black hole always stays in one plane, and that plane contains both the camera and the hole, so a single 2D diagram shows the whole path. The panel reports where the ray ended up (horizon, sky, disk or probe), its impact parameter against the critical value b꜀ = 3√3⁄2 r<sub>s</sub>, the closest approach, and the total bending. It also says which image of the disk the pixel shows: primary, secondary, or a higher order inside the photon ring.
 
+### Change the observer &nbsp;<sub><code>O</code></sub>
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/media/observer-static.jpg" alt="Static observer at 8 r_s" width="100%"></td>
+    <td width="50%"><img src="docs/media/observer-boost.jpg" alt="Same place and moment, boosted to 0.9c toward the hole" width="100%"></td>
+  </tr>
+  <tr>
+    <td><sub><code>STATIC</code> &nbsp;HOVERING AT 8 rₛ</sub></td>
+    <td><sub><code>BOOST 0.90c</code> &nbsp;SAME EVENT · THE SKY CROWDS FORWARD, AHEAD TURNS BLUE</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/media/observer-hover.jpg" alt="Hovering at 2.2 r_s: the shadow fills the view" width="100%"></td>
+    <td><img src="docs/media/observer-fall.jpg" alt="Free-falling through 2.2 r_s: the shadow shrinks to a ring" width="100%"></td>
+  </tr>
+  <tr>
+    <td><sub><code>STATIC</code> &nbsp;HOVERING AT 2.2 rₛ · SHADOW ≈ 121° ACROSS</sub></td>
+    <td><sub><code>FREE FALL 0.67c</code> &nbsp;PASSING 2.2 rₛ · THE SAME SHADOW, MUCH SMALLER</sub></td>
+  </tr>
+</table>
+
+What you see depends on how you move. The camera can **hover**, ride a **circular orbit** at its current radius (0.5c at the ISCO, moving with simulation time), **fall freely** from rest at infinity (dr/dt = −(1 − r<sub>s</sub>/r)√(r<sub>s</sub>/r), reaching about 0.88c near the horizon), or **boost** toward the view at a set speed. Each pixel direction is aberrated into the static frame before tracing, and the Doppler factor D brightens the forward view (∝ D⁴, auto-exposed) and pushes it toward blue. The clock-rate readout follows the observer: √(1 − 1.5 r<sub>s</sub>/r) in orbit, 1 − r<sub>s</sub>/r in free fall.
+
 <br>
 
 ## `03` &nbsp;INTERFACE
@@ -118,7 +141,7 @@ Click any pixel to trace its light ray backwards. A light ray around a non-rotat
 
 | &nbsp; | Region | Contents |
 |:--|:--|:--|
-| `▣` | **Telemetry** · top left | Camera radius, physical distance, inclination, camera clock rate, escape velocity; probe state, radius, clock rate, proper time, redshift and tidal force; Schwarzschild radius, frame rate |
+| `▣` | **Telemetry** · top left | Camera radius, physical distance, inclination, observer mode and speed, observer clock rate, escape velocity; probe state, radius, clock rate, proper time, redshift and tidal force; Schwarzschild radius, Hawking temperature, evaporation time, frame rate |
 | `⌖` | **Ray inspector** · left | Orbital-plane diagram of the clicked ray, its outcome and numbers, and a plain-language reading |
 | `≡` | **Control matrix** · right | Six numbered sections: Simulation, Spacetime, Accretion Disk, Camera, Render, Export. Double-click a slider to reset it |
 | `▶` | **Timeline** · bottom | Reset, slower/reverse, play/pause, faster, step, rate, simulation time in rₛ/c and in physical units, probe orbit phase |
@@ -174,6 +197,22 @@ The renderer places it by coordinate time t, which diverges at the horizon. The 
 A static clock runs at $\sqrt{1 - r_s/r}$. A clock on a circular orbit runs at $\sqrt{1 - 1.5\,r_s/r}$, which is the probe's <code>τ/t</code> readout. Below 3 rₛ its orbit is flagged <code>UNSTABLE</code>.
 
 </td></tr>
+<tr><td><code>OBSERVER</code></td><td>
+
+A camera moving at $\boldsymbol\beta$ relative to a local static observer sees a pixel direction $\hat s'$ that the static frame calls
+
+$$\hat s \propto \hat s' + (\gamma - 1)(\hat s'\!\cdot\hat\beta)\,\hat\beta - \gamma\boldsymbol\beta, \qquad D = \frac{1}{\gamma\,(1 - \boldsymbol\beta\cdot\hat s')}$$
+
+Rays are traced from $\hat s$. The image is scaled by $D^4$ and divided by $D_{max}^3$ for exposure.
+
+</td></tr>
+<tr><td><code>HAWKING</code></td><td>
+
+$$T_H = \frac{\hbar c^3}{8\pi G M k_B} \approx 6.17\times10^{-8}\,\mathrm{K}\;\frac{M_\odot}{M}, \qquad t_{evap} \approx 2.1\times10^{67}\,\mathrm{yr}\left(\frac{M}{M_\odot}\right)^3$$
+
+Every astrophysical hole is far colder than the 2.7 K microwave background. The *10¹² kg* primordial preset sits at about 10¹¹ K.
+
+</td></tr>
 </table>
 
 <br>
@@ -190,6 +229,7 @@ A static clock runs at $\sqrt{1 - r_s/r}$. A clock on a circular orbit runs at $
 | double-click | Gargantua preset | | `G` | equatorial guides |
 | click *(inspect mode)* | trace that pixel's ray | | `D` | release / recall probe |
 | | | | `T` | ray inspector |
+| | | | `O` | cycle observer mode |
 | | | | `P` | PNG snapshot |
 | | | | `R` | record / stop |
 | | | | `H` · `C` · `I` · `F` | hide UI · panel · notes · fullscreen |
@@ -201,7 +241,7 @@ A static clock runs at $\sqrt{1 - r_s/r}$. A clock on a circular orbit runs at $
 | Section | Parameter | Range | Notes |
 |:--|:--|:--|:--|
 | Simulation | Time rate | −4× … 4× | Negative runs time backwards |
-| | Mass scale | 10 M☉ · Sgr A* · 10⁸ M☉ · M87* | Physical units only; the geometry is scale-free |
+| | Mass scale | 10¹² kg · Earth · 10 M☉ · Sgr A* · 10⁸ M☉ · M87* | Physical units and Hawking temperature; the geometry is scale-free |
 | | Probe orbit | 2 – 18 rₛ, 0 – 80° | Circular geodesic, lensed like everything else |
 | | Angular momentum kept | 0 – 98% | Share of orbital L kept on release |
 | | Tidal stretch | on / off | Visual, exaggerated; the telemetry gives the real value |
@@ -211,7 +251,10 @@ A static clock runs at $\sqrt{1 - r_s/r}$. A clock on a circular orbit runs at $
 | | Background | Stars · Grid · Void | |
 | Accretion disk | Palette | Cinematic · Blackbody | Blackbody also sets Doppler to 100% |
 | | Temperature, inner/outer edge, luminosity, optical depth, turbulence, rotation | | |
-| Camera | Presets, FOV, roll, auto-orbit | | |
+| Camera | Observer | Static · Orbit · Free fall · Boost | Aberration and Doppler from the camera's own motion |
+| | Boost speed | 0 – 0.95c | Boost mode only |
+| | Follow trajectory, observer beaming | on / off | Orbit and fall move with simulation time |
+| | Presets, FOV, roll, auto-orbit | | |
 | Render | Integrator | Low · Med · High · Ultra | Step size and step budget per ray |
 | | Resolution, bloom, exposure, star field, vignette, grain | | |
 
@@ -239,6 +282,7 @@ EventHorizon.camera.dist = 6;         // eased; call snapCamera() to jump
 EventHorizon.time = 0;
 EventHorizon.releaseProbe();          // resetProbe() to recall it
 EventHorizon.inspect(640, 300);       // trace the ray at CSS pixel (x, y)
+EventHorizon.set({ observer: 'boost', obsBeta: 0.9 });
 EventHorizon.snapshot();
 ```
 
@@ -250,7 +294,7 @@ EventHorizon.snapshot();
 index.html        HUD markup, field notes
 css/style.css     interface
 js/shaders.js     geodesic tracer, disk, sky, bloom, tone mapping (GLSL ES 3.0)
-js/main.js        render graph, camera, time, probe geodesic, ray inspector, UI, export
+js/main.js        render graph, camera, observer modes, probe geodesic, ray inspector, UI, export
 docs/             README media
 ```
 

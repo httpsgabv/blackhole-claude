@@ -43,6 +43,10 @@ uniform int   uSky;
 uniform float uStars;
 uniform float uGuides;
 
+uniform vec3  uObsBeta;     // observer velocity relative to a local static observer (units of c)
+uniform float uObsBeam;     // apply observer Doppler beaming to the image
+uniform float uObsExpo;     // auto-exposure for beaming: 1 / D_max³
+
 uniform float uPlanetOn;
 uniform vec4  uPlanet;
 uniform vec4  uProbeAxis;   // xyz radial unit vector, w tidal stretch factor
@@ -242,6 +246,19 @@ void main(){
   vec2 uv = (gl_FragCoord.xy - 0.5 * uRes) / min(uRes.x, uRes.y) - uShift;
   vec3 rd = normalize(uCamRot * vec3(uv * 2.0 * uTanFov, 1.0));
 
+  /* Moving observer: rd is a viewing direction in the camera's own frame.
+     Aberration maps it to the static frame the tracer works in (light ahead
+     of the motion gets bunched into a smaller patch of sky). D is the
+     Doppler factor ν_seen / ν_static for this direction. */
+  float D = 1.0;
+  float b2 = dot(uObsBeta, uObsBeta);
+  if(b2 > 1e-8){
+    float gb = inversesqrt(1.0 - b2);
+    vec3 bh = uObsBeta * inversesqrt(b2);
+    D = 1.0 / (gb * (1.0 - dot(uObsBeta, rd)));
+    rd = normalize(rd + (gb - 1.0) * dot(rd, bh) * bh - gb * uObsBeta);
+  }
+
   vec3 pos = uCamPos, vel = rd;
   float rCam = length(uCamPos);
   vec3 hv = cross(pos, vel);
@@ -302,6 +319,13 @@ void main(){
   if(!captured && alpha < 1.0){
     float fade = escaped ? 1.0 : smoothstep(2.0, 6.0, length(pos));
     col += (1.0 - alpha) * sky(normalize(vel)) * fade;
+  }
+  if(uObsBeam > 0.5 && D != 1.0){
+    /* bolometric intensity ∝ D⁴, auto-exposed so the brightest direction
+       does not saturate; hue pushed blue ahead, red behind */
+    col *= min(D * D * D * D, 1e4) * uObsExpo;
+    col *= D > 1.0 ? mix(vec3(1.0), vec3(0.72, 0.88, 1.3), clamp((D - 1.0) * 0.8, 0.0, 1.0))
+                   : mix(vec3(1.0), vec3(1.25, 0.55, 0.3), clamp((1.0 - D) * 1.6, 0.0, 1.0));
   }
   fragColor = vec4(col, 1.0);
 }`;
