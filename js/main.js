@@ -38,8 +38,8 @@ const PRESETS = {
 const P = {
   speed: 1, playing: true, mass: 'gargantua',
   planetOn: true, planetR: 9, planetInc: 10, planetSize: 0.24, infallL: 0.6, tidal: true,
-  gravity: 1, redshift: true, doppler: 0.35, sky: 'stars', stars: 1, guides: false,
-  diskOn: true, palette: 'cinematic', diskIn: 3, diskOut: 13, diskTemp: 6500, diskBright: 0.55,
+  spinA: 0.6, gravity: 1, redshift: true, doppler: 0.35, sky: 'stars', stars: 1, guides: false,
+  diskOn: true, diskIsco: true, palette: 'cinematic', diskIn: 3, diskOut: 13, diskTemp: 6500, diskBright: 0.55,
   turb: 0.7, opacity: 1.4, spin: 1,
   fov: 42, roll: -14, autoOrbit: false, orbitSpeed: 0.04,
   observer: 'static', obsBeta: 0.5, obsMove: true, obsBeam: true,
@@ -167,10 +167,10 @@ function cameraBasis(){
   return { pos, m: new Float32Array([...r2, ...u2, ...f]) };
 }
 
-const DIST_MIN = 1.3, DIST_MAX = 90, PITCH_MAX = 1.55;
+const DIST_MAX = 90, PITCH_MAX = 1.55;
 function clampGoal(){
   for(const k of ['dist', 'yaw', 'pitch', 'shiftX', 'shiftY']) if(!Number.isFinite(goal[k])) goal[k] = PRESETS.gargantua[k];
-  goal.dist = Math.min(DIST_MAX, Math.max(DIST_MIN, goal.dist));
+  goal.dist = Math.min(DIST_MAX, Math.max(distMin(), goal.dist));
   goal.pitch = Math.min(PITCH_MAX, Math.max(-PITCH_MAX, goal.pitch));
 }
 function applyPreset(name){
@@ -184,6 +184,92 @@ function applyPreset(name){
 }
 
 /* ================================================================== */
+/* Kerr geometry                                                       */
+/* ================================================================== */
+/* Units: r_s = 1, so M = 0.5 and the spin parameter is a = (a/M) · M.
+   Boyer-Lindquist coordinates sit on oblate spheroids around the scene's
+   +y axis (the disk normal); φ = atan2(z, x) increases with the rotation. */
+const KM = 0.5;
+const spinA = () => P.spinA * KM;
+const dot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+
+function kerrRPlus(a){ return KM + Math.sqrt(Math.max(KM * KM - a * a, 0)); }
+/* innermost stable circular orbit (Bardeen, Press & Teukolsky 1972); s = +1 prograde */
+function kerrIsco(a, s){
+  const x = Math.min(a / KM, 0.9999);
+  const z1 = 1 + Math.cbrt(1 - x * x) * (Math.cbrt(1 + x) + Math.cbrt(1 - x));
+  const z2 = Math.sqrt(3 * x * x + z1 * z1);
+  return KM * (3 + z2 - s * Math.sqrt(Math.max((3 - z1) * (3 + z1 + 2 * z2), 0)));
+}
+/* equatorial circular photon orbit */
+function kerrPhoton(a, s){ return 2 * KM * (1 + Math.cos(2 / 3 * Math.acos(Math.max(-1, Math.min(1, -s * a / KM))))); }
+
+function blToCart(r, th, ph, a){
+  const s = Math.sqrt(r * r + a * a) * Math.sin(th);
+  return [s * Math.cos(ph), r * Math.cos(th), s * Math.sin(ph)];
+}
+function cartToBL(p, a){
+  const a2 = a * a, t = dot3(p, p) - a2;
+  const r = Math.sqrt(Math.max(0.5 * (t + Math.sqrt(t * t + 4 * a2 * p[1] * p[1])), 1e-8));
+  return [r, Math.acos(Math.max(-1, Math.min(1, p[1] / r))), Math.atan2(p[2], p[0])];
+}
+/* zero-angular-momentum observer: lapse α, frame-dragging rate ω, cylindrical radius ϖ */
+function zamo(r, th, a, M = KM){
+  const sn = Math.sin(th), cs = Math.cos(th), a2 = a * a;
+  const rho2 = r * r + a2 * cs * cs, Dl = r * r - 2 * M * r + a2;
+  const S2 = (r * r + a2) * (r * r + a2) - a2 * Dl * sn * sn;
+  return { alpha: Math.sqrt(Math.max(rho2 * Dl / S2, 0)), omega: 2 * M * a * r / S2, varpi: Math.sqrt(S2 / rho2) * sn, rho2, Dl };
+}
+/* equatorial circular geodesic of sense s: angular velocity, speed seen by the local ZAMO, clock rate dτ/dt */
+function kerrOrbit(r, s, a){
+  const M = KM, sqM = Math.sqrt(M), r15 = r * Math.sqrt(r);
+  const den = r15 + s * a * sqM, rad = r15 - 3 * M * Math.sqrt(r) + 2 * s * a * sqM;
+  const Dl = r * r - 2 * M * r + a * a;
+  return {
+    Om: s * sqM / den,
+    ok: rad > 0 && Dl > 0,
+    v: Math.min(Math.abs(sqM * (r * r - 2 * s * a * Math.sqrt(M * r) + a * a) / (Math.sqrt(Math.max(Dl, 1e-9)) * den)), 0.995),
+    clock: rad > 0 ? Math.pow(r, 0.75) * Math.sqrt(rad) / den : 0,
+  };
+}
+const distMin = () => kerrRPlus(spinA()) + 0.3;
+/* keep the disk's inner edge on the ISCO when it is locked there */
+function syncDiskEdge(){
+  if(!P.diskIsco) return;
+  P.diskIn = Math.round(kerrIsco(spinA(), P.spin) * 100) / 100;
+  if(P.diskOut < P.diskIn + 1) P.diskOut = P.diskIn + 1;
+}
+
+/* Kerr null geodesic, same Hamiltonian as the shader. y = [r, θ, φ, p_r, p_θ] */
+function kerrRHS(y, b, q, M, a){
+  const r = y[0], th = y[1], pr = y[3], pth = y[4], a2 = a * a;
+  const sn = Math.max(Math.sin(th), 1e-4), cs = Math.cos(th), sn2 = sn * sn, cs2 = cs * cs;
+  const rho2 = r * r + a2 * cs2, ir2 = 1 / rho2, ir4 = ir2 * ir2;
+  const Dl = r * r - 2 * M * r + a2, Dc = Math.max(Dl, 1e-6);
+  const Pp = r * r + a2 - a * b, K = (b - a) * (b - a) + q;
+  const R = Pp * Pp - Dl * K, Th = q - cs2 * (b * b / sn2 - a2);
+  const dD = 2 * r - 2 * M, dR = 4 * r * Pp - dD * K;
+  const dAr = (dD * rho2 - 2 * r * Dl) * 0.5 * ir4, dBr = -r * ir4;
+  const dCr = 0.5 * dR * ir2 / Dc - 0.5 * R * (dD * rho2 + 2 * r * Dl) * ir4 / (Dc * Dc) - Th * r * ir4;
+  const drho = -2 * a2 * cs * sn, dTh = 2 * cs * (b * b / (sn2 * sn) - a2 * sn);
+  const dAt = -0.5 * Dl * drho * ir4, dBt = -0.5 * drho * ir4;
+  const dCt = -0.5 * R * drho * ir4 / Dc + 0.5 * dTh * ir2 - 0.5 * Th * drho * ir4;
+  return [Dl * ir2 * pr, pth * ir2, (a * Pp / Dc + (b - a) + b * cs2 / sn2) * ir2,
+          -(dAr * pr * pr + dBr * pth * pth - dCr), -(dAt * pr * pr + dBt * pth * pth - dCt)];
+}
+function kerrStep(y, b, q, h, M, a){
+  const f = (v, k, c) => v.map((x, i) => x + c * k[i]);
+  const k1 = kerrRHS(y, b, q, M, a);
+  const k2 = kerrRHS(f(y, k1, 0.5 * h), b, q, M, a);
+  const k3 = kerrRHS(f(y, k2, 0.5 * h), b, q, M, a);
+  const k4 = kerrRHS(f(y, k3, h), b, q, M, a);
+  const n = y.map((x, i) => x + h / 6 * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]));
+  if(n[1] < 0){ n[1] = -n[1]; n[2] += Math.PI; n[4] = -n[4]; }
+  else if(n[1] > Math.PI){ n[1] = 2 * Math.PI - n[1]; n[2] += Math.PI; n[4] = -n[4]; }
+  return n;
+}
+
+/* ================================================================== */
 /* Probe: circular orbit, or free fall along a timelike geodesic       */
 /* ================================================================== */
 /* Infall is integrated in the probe's proper time τ (M = 0.5, r_s = 1):
@@ -193,7 +279,7 @@ function applyPreset(name){
    the probe freezes and fades, while τ reaches the horizon in finite time. */
 const probe = { falling: false, t0: 0, phi0: 0, R0: 0, L: 0, E: 1, tab: null, tauH: Infinity, bound: false };
 
-const orbitPhase = t => Math.sqrt(0.5 / Math.pow(P.planetR, 3)) * P.spin * t + 2.2;
+const orbitPhase = t => kerrOrbit(P.planetR, P.spin, spinA()).Om * t + 2.2;
 
 function releaseProbe(){
   const R = P.planetR, M = 0.5;
@@ -255,7 +341,7 @@ function planetPos(){
     vTan = probe.L * Math.sqrt(Math.max(0, 1 - 1 / r)) / (r * probe.E) * P.spin;
   } else {
     r = P.planetR; ph = orbitPhase(simTime);
-    vRad = 0; vTan = Math.sqrt(0.5 / Math.max(r - 1, 0.05)) * P.spin;
+    vRad = 0; vTan = kerrOrbit(r, P.spin, spinA()).v * P.spin;
   }
   const c = Math.cos(ph), s = Math.sin(ph);
   const p = toWorld(r * c, r * s);
@@ -267,8 +353,8 @@ function planetPos(){
   const n = norm(sub(cameraBasis().pos, p));
   const gamma = 1 / Math.sqrt(1 - beta * beta);
   const doppler = 1 / (gamma * (1 - (v[0] * n[0] + v[1] * n[1] + v[2] * n[2])));
-  const rc = cam.dist;
-  const grav = Math.sqrt(Math.max(1 - 1 / r, 0)) / Math.sqrt(Math.max(1 - 1 / rc, 1e-3));
+  const aS = spinA(), bp = cartToBL(p, aS), bc = cartToBL(cameraBasis().pos, aS);
+  const grav = zamo(bp[0], bp[1], aS).alpha / Math.max(zamo(bc[0], bc[1], aS).alpha, 1e-3);
   const g = doppler * (P.redshift ? grav : 1);
   // tidal stretch along the radial direction (visual, exaggerated)
   const stretch = P.tidal ? 1 + 2.5 / (r * r * r) : 1;
@@ -286,8 +372,6 @@ function planetPos(){
    local static observer; the shader turns it into aberration (light from
    ahead bunches up) and a Doppler factor D (ahead brighter and bluer). */
 const obs = { dir: null, state: null };
-const dot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-
 const camPosOf = c => {
   const cp = Math.cos(c.pitch);
   return [c.dist * cp * Math.sin(c.yaw), c.dist * Math.sin(c.pitch), c.dist * cp * Math.cos(c.yaw)];
@@ -325,9 +409,11 @@ function toCamera(s, v){
   return norm(add(add(s, scl(bh, (g - 1) * dot3(s, bh))), scl(v, g)));
 }
 
+/* Velocities are measured by the local zero-angular-momentum observer (ZAMO),
+   the frame the shader traces in. With a = 0 it is the ordinary static observer. */
 function observerState(){
   const r = cam.dist, pos = camPosOf(cam), rh = scl(pos, 1 / r);
-  const still = Math.sqrt(Math.max(0, 1 - 1 / r));
+  const a = spinA(), bl = cartToBL(pos, a), Z = zamo(bl[0], bl[1], a);
   if(P.observer === 'orbit'){
     // keep the direction of motion tangent to the sphere; it survives user drags
     let dir = obs.dir || horizontalTangent(pos);
@@ -335,35 +421,49 @@ function observerState(){
     const l = Math.hypot(dir[0], dir[1], dir[2]);
     dir = l < 1e-6 ? horizontalTangent(pos) : scl(dir, 1 / l);
     obs.dir = dir;
-    const ok = r > 1.5;
-    const b = ok ? Math.min(Math.sqrt(0.5 / (r - 1)), 0.995) : 0.995;   // local orbital speed
-    return { v: scl(dir, b), b, clock: ok ? Math.sqrt(1 - 1.5 / r) : 0, note: !ok ? 'NO ORBIT' : r < 3 ? 'UNSTABLE' : '' };
+    const o = kerrOrbit(bl[0], P.spin, a);   // equatorial formula, applied along the orbit
+    const b = o.ok ? o.v : 0.995;
+    return { v: scl(dir, b), b, clock: o.clock, note: !o.ok ? 'NO ORBIT' : bl[0] < kerrIsco(a, P.spin) ? 'UNSTABLE' : '' };
   }
   if(P.observer === 'fall'){
-    const b = Math.min(Math.sqrt(1 / r), 0.995);                         // from rest at infinity
-    return { v: scl(rh, -b), b, clock: Math.max(0, 1 - 1 / r), note: r <= DIST_MIN + 1e-3 ? 'LIMIT' : '' };
+    // dropped from rest at infinity with zero angular momentum: γ = 1/α relative to the ZAMO
+    const b = Math.min(Math.sqrt(Math.max(1 - Z.alpha * Z.alpha, 0)), 0.995);
+    return { v: scl(rh, -b), b, clock: Z.alpha * Z.alpha, note: r <= distMin() + 1e-3 ? 'LIMIT' : '' };
   }
   if(P.observer === 'boost'){
     const m = cameraBasis().m, b = P.obsBeta;
-    return { v: [m[6] * b, m[7] * b, m[8] * b], b, clock: still * Math.sqrt(1 - b * b), note: '' };
+    return { v: [m[6] * b, m[7] * b, m[8] * b], b, clock: Z.alpha * Math.sqrt(1 - b * b), note: '' };
   }
-  return { v: [0, 0, 0], b: 0, clock: still, note: '' };
+  // static: fixed against the distant stars, i.e. pushing back against frame dragging
+  // at v = ωϖ/α. Inside the ergosphere that would exceed c, so the camera is dragged along.
+  const l = Math.hypot(pos[0], pos[2]);
+  const ephi = l > 1e-6 ? [-pos[2] / l, 0, pos[0] / l] : [1, 0, 0];
+  const vs = Z.alpha > 1e-6 ? Z.omega * Z.varpi / Z.alpha : 1;
+  if(vs < 0.999) return { v: scl(ephi, -vs), b: vs, clock: Z.alpha * Math.sqrt(1 - vs * vs), note: '' };
+  return { v: [0, 0, 0], b: 0, clock: Z.alpha, note: 'ERGOSPHERE', dragged: true };
 }
 
 /* advance the camera along its worldline by dSim of coordinate time */
 function moveObserver(dSim){
   if(!P.obsMove || !dSim) return;
-  if(P.observer === 'orbit' && obs.dir && cam.dist > 1.5){
-    const axis = norm(cross(camPosOf(cam), obs.dir));
-    for(const c of [cam, goal]){
-      const w = Math.sqrt(0.5 / Math.pow(c.dist, 3));                    // Ω = √(M/r³)
-      setCamPos(c, rotateAbout(camPosOf(c), axis, w * dSim));
-    }
-    obs.dir = rotateAbout(obs.dir, axis, Math.sqrt(0.5 / Math.pow(cam.dist, 3)) * dSim);
+  const a = spinA();
+  if(P.observer === 'orbit' && obs.dir){
+    const o = kerrOrbit(cartToBL(camPosOf(cam), a)[0], P.spin, a);
+    if(!o.ok) return;
+    const axis = norm(cross(camPosOf(cam), obs.dir)), ang = Math.abs(o.Om) * dSim;
+    for(const c of [cam, goal]) setCamPos(c, rotateAbout(camPosOf(c), axis, ang));
+    obs.dir = rotateAbout(obs.dir, axis, ang);
   } else if(P.observer === 'fall'){
     for(const c of [cam, goal]){
-      const r = c.dist;
-      c.dist = Math.min(DIST_MAX, Math.max(DIST_MIN, r - (1 - 1 / r) * Math.sqrt(1 / r) * dSim));   // dr/dt
+      const bl = cartToBL(camPosOf(c), a), Z = zamo(bl[0], bl[1], a);
+      const drdt = -Z.alpha * Z.alpha * Math.sqrt(2 * KM * bl[0] * (bl[0] * bl[0] + a * a)) / Z.rho2;
+      c.dist = Math.min(DIST_MAX, Math.max(distMin(), c.dist + drdt * dSim));
+      c.yaw -= Z.omega * dSim;                 // dragged around with dφ/dt = ω
+    }
+  } else if(P.observer === 'static' && obs.state && obs.state.dragged){
+    for(const c of [cam, goal]){
+      const bl = cartToBL(camPosOf(c), a);
+      c.yaw -= zamo(bl[0], bl[1], a).omega * dSim;
     }
   }
 }
@@ -400,6 +500,15 @@ function render(){
   u1f(pr, 'uObsBeam', P.obsBeam ? 1 : 0);
   u1f(pr, 'uObsExpo', Math.pow((1 - ob.b) / (1 + ob.b), 1.5));   // 1 / D_max³
   u1f(pr, 'uGravity', P.gravity);
+  const aS = spinA();
+  u1f(pr, 'uM', KM * P.gravity);
+  u1f(pr, 'uA', aS * P.gravity);
+  u1f(pr, 'uDiskM', KM);
+  u1f(pr, 'uDiskA', aS);
+  u1f(pr, 'uRCapture', kerrRPlus(aS) + 0.02);
+  u1f(pr, 'uPhPro', kerrPhoton(aS, 1));
+  u1f(pr, 'uPhRetro', kerrPhoton(aS, -1));
+  u1f(pr, 'uIsco', kerrIsco(aS, P.spin));
   u1f(pr, 'uEscape', Math.max(rCam * 1.05 + 2, P.diskOut * 1.4, 28));
   u1f(pr, 'uStepK', q.k);
   u1i(pr, 'uMaxSteps', q.steps);
@@ -486,7 +595,7 @@ const SECTIONS = [
       hint: 'Sets physical units and the Hawking temperature. The geometry is scale-free.' },
     { t: 'toggle', k: 'planetOn', label: 'Orbiting probe' },
     { t: 'range', k: 'planetR', label: 'Orbit radius', min: 2, max: 18, step: 0.1, fmt: v => v.toFixed(1) + ' rₛ', dep: 'planetOn',
-      hint: 'Circular orbits below 3 rₛ (ISCO) are unstable.' },
+      hint: 'Circular orbits inside the ISCO (3 rₛ without spin) are unstable.' },
     { t: 'range', k: 'planetInc', label: 'Orbit inclination', min: 0, max: 80, step: 1, fmt: v => v + '°', dep: 'planetOn' },
     { t: 'range', k: 'infallL', label: 'Angular momentum kept', min: 0, max: 0.98, step: 0.01, fmt: pct, dep: 'planetOn',
       hint: 'Share of its orbital angular momentum the probe keeps on release. 0% is a straight radial plunge; high values give a precessing orbit.' },
@@ -494,6 +603,9 @@ const SECTIONS = [
     { t: 'toggle', k: 'tidal', label: 'Tidal stretch (exaggerated)', dep: 'planetOn' },
   ]},
   { id: 'space', title: 'Spacetime', items: [
+    { t: 'range', k: 'spinA', label: 'Spin a/M', min: 0, max: 0.998, step: 0.001, fmt: v => v.toFixed(3),
+      hint: '0 is a non-spinning (Schwarzschild) hole; 0.998 is about the fastest spin gas accretion allows. Interstellar\'s effects team rendered Gargantua at 0.6.' },
+    { t: 'note', id: 'spinNote' },
     { t: 'range', k: 'gravity', label: 'Light bending', min: 0, max: 1, step: 0.01, fmt: pct,
       hint: '0% = light travels in straight lines (no lensing).' },
     { t: 'range', k: 'doppler', label: 'Doppler beaming', min: 0, max: 1, step: 0.01, fmt: pct,
@@ -507,12 +619,14 @@ const SECTIONS = [
     { t: 'toggle', k: 'diskOn', label: 'Accretion disk' },
     { t: 'seg', k: 'palette', label: 'Palette', opts: [['cinematic', 'CINEMATIC'], ['blackbody', 'BLACKBODY']], dep: 'diskOn' },
     { t: 'range', k: 'diskTemp', label: 'Peak temperature', min: 1500, max: 30000, step: 100, fmt: v => Math.round(v) + ' K', dep: 'diskOn' },
-    { t: 'range', k: 'diskIn', label: 'Inner edge', min: 1.5, max: 8, step: 0.05, fmt: v => v.toFixed(2) + ' rₛ', dep: 'diskOn' },
+    { t: 'toggle', k: 'diskIsco', label: 'Inner edge at ISCO', dep: 'diskOn' },
+    { t: 'range', k: 'diskIn', label: 'Inner edge', min: 0.5, max: 8, step: 0.01, fmt: v => v.toFixed(2) + ' rₛ', dep: () => P.diskOn && !P.diskIsco },
     { t: 'range', k: 'diskOut', label: 'Outer edge', min: 5, max: 26, step: 0.1, fmt: v => v.toFixed(1) + ' rₛ', dep: 'diskOn' },
     { t: 'range', k: 'diskBright', label: 'Luminosity', min: 0, max: 3, step: 0.01, fmt: v => v.toFixed(2), dep: 'diskOn' },
     { t: 'range', k: 'opacity', label: 'Optical depth', min: 0.1, max: 4, step: 0.01, fmt: v => v.toFixed(2), dep: 'diskOn' },
     { t: 'range', k: 'turb', label: 'Turbulence', min: 0, max: 1, step: 0.01, fmt: pct, dep: 'diskOn' },
-    { t: 'seg', k: 'spin', label: 'Rotation', opts: [[1, 'PROGRADE'], [-1, 'RETROGRADE']], dep: 'diskOn' },
+    { t: 'seg', k: 'spin', label: 'Disk rotation', opts: [[1, 'PROGRADE'], [-1, 'RETROGRADE']], dep: 'diskOn',
+      hint: 'Relative to the hole\'s spin. Retrograde orbits must stay farther out.' },
   ]},
   { id: 'cam', title: 'Camera', items: [
     { t: 'buttons', items: [['Gargantua', () => applyPreset('gargantua')], ['Edge-on', () => applyPreset('edge')],
@@ -617,6 +731,14 @@ function syncUI(){
   $('#timeline').classList.toggle('playing', P.playing);
   $('#tlRate').textContent = '×' + P.speed.toFixed(2);
   $('#legend').classList.toggle('on', P.guides);
+  const aS = spinA(), phP = kerrPhoton(aS, 1), phR = kerrPhoton(aS, -1);
+  const spinned = aS > 1e-4;
+  $('#legend').innerHTML =
+    `<div><i style="background:var(--cyan)"></i>${spinned ? 'PHOTON ORBITS · ' + phP.toFixed(2) + ' / ' + phR.toFixed(2) : 'PHOTON SPHERE · 1.50'} r<sub>s</sub></div>` +
+    `<div><i style="background:var(--accent)"></i>ISCO · ${kerrIsco(aS, P.spin).toFixed(2)} r<sub>s</sub></div>` +
+    `<div><i style="background:rgba(200,215,230,.5)"></i>GRID · 1 r<sub>s</sub> / 30°</div>`;
+  const sn = $('#spinNote');
+  if(sn) sn.textContent = `Horizon r₊ ${kerrRPlus(aS).toFixed(3)} · ISCO ${kerrIsco(aS, 1).toFixed(2)} pro / ${kerrIsco(aS, -1).toFixed(2)} retro · photon orbits ${phP.toFixed(2)} / ${phR.toFixed(2)} · ergosphere 1.00 at the equator (all rₛ)`;
   const drop = document.querySelector('.btn.drop');
   if(drop){
     drop.classList.toggle('active', probe.falling);
@@ -625,6 +747,8 @@ function syncUI(){
 }
 
 function onParam(k){
+  if(k === 'spinA' || k === 'spin' || k === 'diskIsco') syncDiskEdge();
+  if(k === 'spinA') clampGoal();
   if(k === 'observer') obs.dir = null;
   if(k === 'planetR' && probe.falling) resetProbe();
   if(k === 'fov' || k === 'roll') goal[k] = P[k];
@@ -645,7 +769,7 @@ const DEFAULTS = Object.assign({}, P);
 const TELE = [
   ['R_CAM', 'rcam'], ['DISTANCE', 'rphys'], ['INCLINATION', 'incl'], ['OBSERVER', 'obs'], ['CLOCK RATE', 'clock'],
   ['ESCAPE V', 'vesc'], ['PROBE', 'pstate'], ['PROBE R', 'pr'], ['PROBE τ/t', 'probe'], ['PROBE τ', 'ptau'],
-  ['REDSHIFT g', 'pg'], ['TIDAL · 2 m', 'tidal'], ['R_S', 'rs'], ['HAWKING T', 'hawk'], ['EVAPORATION', 'evap'], ['FRAME', 'fps'],
+  ['REDSHIFT g', 'pg'], ['TIDAL · 2 m', 'tidal'], ['R_S', 'rs'], ['SPIN · r₊', 'spin'], ['FRAME DRAG', 'drag'], ['HAWKING T', 'hawk'], ['EVAPORATION', 'evap'], ['FRAME', 'fps'],
 ];
 const teleEls = {};
 (function(){
@@ -703,10 +827,11 @@ function updateProbeTelemetry(rsKm, tUnit){
     tau = st.tau.toFixed(2) + ' rₛ/c';
     if(!probe.bound) tau += ' / ' + probe.tauH.toFixed(2);
   } else {
-    state = r < 3 ? 'ORBIT · UNSTABLE' : 'CIRCULAR ORBIT';
-    rate = r > 1.5 ? Math.sqrt(1 - 1.5 / r) : 0;
+    const o = kerrOrbit(r, P.spin, spinA()), unstable = r < kerrIsco(spinA(), P.spin);
+    state = !o.ok ? 'NO ORBIT' : unstable ? 'ORBIT · UNSTABLE' : 'CIRCULAR ORBIT';
+    rate = o.clock;
   }
-  setTele('pstate', state, st ? !probe.bound : r < 3);
+  setTele('pstate', state, st ? !probe.bound : r < kerrIsco(spinA(), P.spin));
   setTele('pr', r < 1.001 ? (1 + (r - 1)).toFixed(6) + ' rₛ' : r.toFixed(3) + ' rₛ');
   setTele('probe', rate.toFixed(4) + '×');
   setTele('ptau', tau);
@@ -736,13 +861,21 @@ function updateTelemetry(dt){
   teleEls.incl.textContent = (90 - cam.pitch * 180 / Math.PI).toFixed(1) + '°';
   const ob = obs.state || observerState();
   const obsName = { static: 'STATIC', orbit: 'ORBIT', fall: 'FALL', boost: 'BOOST' }[P.observer];
-  setTele('obs', P.observer === 'static' ? obsName : `${obsName} ${ob.b.toFixed(3)}c${ob.note ? ' ' + ob.note : ''}`, !!ob.note);
+  setTele('obs', P.observer === 'static' && !ob.b && !ob.note ? obsName : `${obsName} ${ob.b.toFixed(3)}c${ob.note ? ' ' + ob.note : ''}`, !!ob.note);
   teleEls.clock.textContent = ob.clock.toFixed(4) + '×';
   teleEls.vesc.textContent = Math.sqrt(1 / r).toFixed(3) + ' c';
   updateProbeTelemetry(rsKm, tUnit);
   teleEls.rs.textContent = fmtLen(rsKm);
-  // Hawking: T = ħc³ / (8πGMk_B) ≈ 6.17×10⁻⁸ K · (M☉/M);  t_evap ≈ 2.1×10⁶⁷ yr · (M/M☉)³
-  const TH = 6.169e-8 / m, tEvap = 2.1e67 * m * m * m;
+  const aS = spinA(), rp = kerrRPlus(aS);
+  setTele('spin', `${P.spinA.toFixed(3)} · ${rp.toFixed(3)} rₛ`);
+  if(aS > 1e-4){
+    const bl = cartToBL(camPosOf(cam), aS), Z = zamo(bl[0], bl[1], aS);
+    const ergo = bl[0] < KM + Math.sqrt(KM * KM - aS * aS * Math.cos(bl[1]) ** 2);
+    setTele('drag', fmtDur(2 * Math.PI / Z.omega * tUnit) + ' / TURN' + (ergo ? ' · ERGO' : ''), ergo);
+  } else setTele('drag', '—');
+  // Hawking: T = ħc³ / (8πGMk_B) ≈ 6.17×10⁻⁸ K · (M☉/M) for a = 0, times 2√(M² − a²)/r₊ with spin;
+  // t_evap ≈ 2.1×10⁶⁷ yr · (M/M☉)³ (non-spinning estimate)
+  const TH = 6.169e-8 / m * 2 * Math.sqrt(Math.max(KM * KM - aS * aS, 0)) / rp, tEvap = 2.1e67 * m * m * m;
   setTele('hawk', fmtSci(TH) + ' K' + (TH < 2.725 ? ' · < CMB' : ''), TH > 1e6);
   setTele('evap', tEvap < 1 ? fmtDur(tEvap * 3.15576e7) : fmtSci(tEvap) + ' yr' + (tEvap < 1.38e10 ? ' · < AGE OF UNIVERSE' : ''), tEvap < 1.38e10);
   teleEls.fps.textContent = Math.round(fpsAvg) + ' FPS · ' + Math.round(canvas.width * P.scale) + '×' + Math.round(canvas.height * P.scale);
@@ -997,45 +1130,68 @@ function project(p, rect, B){
 function traceRay(px, py){
   const rect = canvas.getBoundingClientRect(), B = cameraBasis();
   const d = toStatic(viewRay(px, py, rect, B), (obs.state || observerState()).v);
-  let pos = B.pos.slice(), vel = d.slice();
-  const hv = cross(pos, vel), b = Math.hypot(hv[0], hv[1], hv[2]);
-  const k = -1.5 * b * b * P.gravity;
+  const aT = spinA(), a = aT * P.gravity, M = KM * P.gravity;
+  // camera frame (ZAMO) and the arriving photon's constants, exactly as in the shader
+  let y = cartToBL(B.pos, a);
+  const cr = y[0], sn = Math.sin(y[1]), cs = Math.cos(y[1]), sq = Math.sqrt(cr * cr + a * a);
+  const er = norm([cr / sq * sn * Math.cos(y[2]), cs, cr / sq * sn * Math.sin(y[2])]);
+  const et = norm([sq * cs * Math.cos(y[2]), -cr * sn, sq * cs * Math.sin(y[2])]);
+  const ep = [-Math.sin(y[2]), 0, Math.cos(y[2])];
+  const Z = zamo(cr, y[1], a, M);
+  const n = scl(d, -1);
+  const camE = 1 / (Z.alpha + Z.omega * Z.varpi * dot3(n, ep));
+  const pr = camE * Math.sqrt(Z.rho2 / Z.Dl) * dot3(n, er), pth = camE * Math.sqrt(Z.rho2) * dot3(n, et);
+  let Lz = camE * Z.varpi * dot3(n, ep);
+  if(Math.abs(Lz) < 2e-3) Lz = 0;                          // through the axis, as in the shader
+  const q = pth * pth + cs * cs * (Lz * Lz / Math.max(sn * sn, 1e-8) - a * a);
+  y = [y[0], y[1], y[2], pr, pth];
+
+  const capture = kerrRPlus(aT) + 0.02;
   const esc = Math.max(cam.dist * 1.05 + 2, P.diskOut * 1.4, 28);
-  const path = [pos.slice()], hits = [];
-  let outcome = 'lost', rMin = cam.dist, bend = 0;
-  const pl = lastPlanet, pr = P.planetSize * (pl ? Math.max(pl.stretch, 1) : 1);
-  for(let i = 0; i < 30000; i++){
-    const r = Math.hypot(pos[0], pos[1], pos[2]);
-    if(r < 1){ outcome = 'horizon'; break; }
-    if(r > esc && dot3(pos, vel) > 0){ outcome = 'escaped'; break; }
-    const dt = Math.max(0.008 * r, 0.002);
-    const acc = scl(pos, k / Math.pow(r, 5));
-    const np = add(add(pos, scl(vel, dt)), scl(acc, 0.5 * dt * dt));
-    const nr = Math.hypot(np[0], np[1], np[2]);
-    const nv = add(vel, scl(add(acc, scl(np, k / Math.pow(nr, 5))), 0.5 * dt));
-    bend += Math.acos(Math.min(1, Math.max(-1, dot3(vel, nv) / (Math.hypot(vel[0], vel[1], vel[2]) * Math.hypot(nv[0], nv[1], nv[2])))));
-    rMin = Math.min(rMin, nr);
-    if(pos[1] * np[1] < 0){
-      const t = pos[1] / (pos[1] - np[1]);
-      const hp = add(pos, scl(sub(np, pos), t)), rh = Math.hypot(hp[0], hp[2]);
+  let cPrev = blToCart(y[0], y[1], y[2], a), dir = d;
+  const path = [cPrev], hits = [];
+  let outcome = 'lost', rMin = y[0], bend = 0;
+  const pl = lastPlanet, prad = P.planetSize * (pl ? Math.max(pl.stretch, 1) : 1);
+  for(let i = 0; i < 40000; i++){
+    if(y[0] < capture){ outcome = 'horizon'; break; }
+    const y0 = y;
+    // same adaptive rule as the shader, at a finer base step
+    const rdot = (y[0] * y[0] - 2 * M * y[0] + a * a) / (y[0] * y[0] + a * a * Math.cos(y[1]) ** 2) * y[3];
+    const h = -Math.min(Math.min(Math.max(0.012 * y[0], 0.002), 1), 0.25 * Math.max(y[0] - capture + 0.02, 1e-4) / Math.max(Math.abs(rdot), 1e-6))
+              * Math.min(1, Math.max(0.005, Math.sin(y[1]) * 5));
+    y = kerrStep(y, Lz, q, h, M, a);
+    if(!(y[0] > 0) || !y.every(Number.isFinite) || Math.abs(y[3]) > 1e8){ outcome = 'horizon'; break; }
+    const c1 = blToCart(y[0], y[1], y[2], a), seg = sub(c1, cPrev), sl = Math.hypot(seg[0], seg[1], seg[2]);
+    if(sl > 1e-9){
+      const nd = scl(seg, 1 / sl);
+      bend += Math.acos(Math.min(1, Math.max(-1, dot3(dir, nd))));
+      dir = nd;
+    }
+    rMin = Math.min(rMin, y[0]);
+    const cs0 = Math.cos(y0[1]), cs1 = Math.cos(y[1]);
+    if(cs0 * cs1 < 0){
+      const t = cs0 / (cs0 - cs1), rh = y0[0] + (y[0] - y0[0]) * t, phh = y0[2] + (y[2] - y0[2]) * t;
+      const hp = blToCart(rh, Math.PI / 2, phh, a);
       hits.push({ p: hp, r: rh, inDisk: P.diskOn && rh >= P.diskIn * 0.9 && rh <= P.diskOut, order: hits.length + 1,
                   far: dot3(hp, B.pos) < 0 });
     }
-    if(P.planetOn && pl){
-      const seg = sub(np, pos), L2 = dot3(seg, seg);
-      const tt = Math.min(1, Math.max(0, dot3(sub(pl.p, pos), seg) / L2));
-      const c = add(pos, scl(seg, tt)), dc = sub(c, pl.p);
-      if(Math.hypot(dc[0], dc[1], dc[2]) < pr){ outcome = 'probe'; path.push(c); break; }
+    if(P.planetOn && pl && sl > 1e-9){
+      const tt = Math.min(1, Math.max(0, dot3(sub(pl.p, cPrev), seg) / (sl * sl)));
+      const c = add(cPrev, scl(seg, tt)), dc = sub(c, pl.p);
+      if(Math.hypot(dc[0], dc[1], dc[2]) < prad){ outcome = 'probe'; path.push(c); break; }
     }
-    pos = np; vel = nv;
-    path.push(pos);
+    path.push(c1);
+    cPrev = c1;
+    if(y[0] > esc && y[0] > y0[0]){ outcome = 'escaped'; break; }
   }
-  // basis of the ray's orbital plane
+  // diagram plane: through the hole, the camera and the initial ray (rays only stay in it when a = 0)
   const e1 = norm(B.pos);
-  const n = b > 1e-6 ? scl(hv, 1 / b) : norm(cross(e1, Math.abs(e1[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0]));
-  const e2 = cross(n, e1);
-  const defl = Math.acos(Math.min(1, Math.max(-1, dot3(d, norm(vel))))) * 180 / Math.PI;
-  return { path, hits, outcome, b, rMin, bend, defl, n, e1, e2 };
+  const hv = cross(B.pos, d), hl = Math.hypot(hv[0], hv[1], hv[2]);
+  const nrm = hl > 1e-6 ? scl(hv, 1 / hl) : norm(cross(e1, Math.abs(e1[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0]));
+  const e2 = cross(nrm, e1);
+  const defl = Math.acos(Math.min(1, Math.max(-1, dot3(d, dir)))) * 180 / Math.PI;
+  return { path, hits, outcome, b: Math.sqrt(Math.max(q + Lz * Lz, 0)), Lz, q, rMin, bend, defl,
+           n: nrm, e1, e2, planar: a < 1e-4 };
 }
 
 /* ---- orbital-plane diagram ---- */
@@ -1066,9 +1222,11 @@ function drawDiagram(R){
     }
   }
   // ISCO, photon sphere, horizon
-  parts.push(`<circle cx="${cx}" cy="${cy}" r="${f(3 * s)}" fill="none" stroke="rgba(255,179,107,.28)" stroke-dasharray="1 3"/>`);
-  parts.push(`<circle cx="${cx}" cy="${cy}" r="${f(1.5 * s)}" fill="none" stroke="#7fd8ff" stroke-opacity=".75" stroke-dasharray="3 3"/>`);
-  parts.push(`<circle cx="${cx}" cy="${cy}" r="${f(Math.max(s, 1.5))}" fill="#000" stroke="rgba(233,230,223,.5)" stroke-width=".8"/>`);
+  const aS = spinA(), phP = kerrPhoton(aS, 1), phR = kerrPhoton(aS, -1);
+  parts.push(`<circle cx="${cx}" cy="${cy}" r="${f(kerrIsco(aS, P.spin) * s)}" fill="none" stroke="rgba(255,179,107,.28)" stroke-dasharray="1 3"/>`);
+  parts.push(`<circle cx="${cx}" cy="${cy}" r="${f(phP * s)}" fill="none" stroke="#7fd8ff" stroke-opacity=".75" stroke-dasharray="3 3"/>`);
+  if(phR - phP > 0.01) parts.push(`<circle cx="${cx}" cy="${cy}" r="${f(phR * s)}" fill="none" stroke="#7fd8ff" stroke-opacity=".4" stroke-dasharray="3 3"/>`);
+  parts.push(`<circle cx="${cx}" cy="${cy}" r="${f(Math.max(kerrRPlus(aS) * s, 1.5))}" fill="#000" stroke="rgba(233,230,223,.5)" stroke-width=".8"/>`);
   // probe, if it lies near this plane
   if(P.planetOn && lastPlanet && Math.abs(dot3(lastPlanet.p, R.n)) < 1.2){
     const q = to2(lastPlanet.p);
@@ -1101,7 +1259,7 @@ function drawDiagram(R){
   const camIn = c0[0] >= 0 && c0[0] <= W && c0[1] >= 0 && c0[1] <= W;
   parts.push(`<rect x="${f(c0[0] - 3)}" y="${f(c0[1] - 3)}" width="6" height="6" fill="#0b0c10" stroke="#e9e6df"/></g>`);
   parts.push(`<g font-size="8" letter-spacing="1.6" fill="rgba(233,230,223,.4)" font-family="JetBrains Mono, monospace">
-    <text x="10" y="16">ORBITAL PLANE</text><text x="250" y="16" text-anchor="end">⌀ ${(viewR * 2).toFixed(viewR < 10 ? 1 : 0)} rₛ</text>
+    <text x="10" y="16">${R.planar ? 'ORBITAL PLANE' : 'PROJECTED · KERR RAYS LEAVE THE PLANE'}</text><text x="250" y="16" text-anchor="end">⌀ ${(viewR * 2).toFixed(viewR < 10 ? 1 : 0)} rₛ</text>
     ${camIn ? `<text x="${f(c0[0] + 7)}" y="${f(c0[1] + 12)}">CAM</text>` : '<text x="10" y="250">CAMERA OFF-SCALE · WIDE TO SEE</text>'}
   </g>`);
   $('#raySvg').innerHTML = parts.join('');
@@ -1109,7 +1267,7 @@ function drawDiagram(R){
 
 function describe(R){
   const first = R.hits.find(h => h.inDisk);
-  const near = Math.abs(R.b - B_CRIT) < 0.06 && P.gravity > 0.99;
+  const near = R.planar && Math.abs(R.b - B_CRIT) < 0.06 && P.gravity > 0.99;
   const ord = n => ['primary', 'secondary', 'tertiary'][n - 1] || n + 'th-order';
   let txt;
   if(first){
@@ -1125,6 +1283,8 @@ function describe(R){
   } else if(R.outcome === 'horizon'){
     txt = R.b < 0.3
       ? '<b>Shadow.</b> Aimed almost straight at the hole, the ray falls in radially. No light can come from this direction.'
+      : !R.planar
+      ? `<b>Shadow.</b> The ray crosses the horizon at r₊ = ${kerrRPlus(spinA()).toFixed(3)} rₛ. With spin the capture limit depends on direction: rays moving with the rotation (L<sub>z</sub> > 0) can pass closer than rays moving against it, so the shadow is flattened on the side where the hole turns toward you.`
       : `<b>Shadow.</b> The impact parameter b = ${R.b.toFixed(2)} rₛ is below b꜀ ≈ ${B_CRIT.toFixed(2)} rₛ, so the ray spirals through the photon sphere and crosses the horizon. No light can come from this direction.`;
   } else if(R.outcome === 'escaped'){
     txt = `<b>Background sky</b>, bent by ${R.defl.toFixed(1)}°. `;
@@ -1145,9 +1305,10 @@ function updateInspectorPanel(R){
   const inDisk = R.hits.filter(h => h.inDisk);
   const rows = [
     ['OUTCOME', out, R.outcome !== 'escaped'],
-    ['IMPACT b', R.b.toFixed(3) + ' rₛ', Math.abs(R.b - B_CRIT) < 0.06],
-    ['CRITICAL b꜀', B_CRIT.toFixed(3) + ' rₛ'],
-    ['CLOSEST r', R.rMin.toFixed(3) + ' rₛ'],
+    ['IMPACT b', R.b.toFixed(3) + ' rₛ', R.planar && Math.abs(R.b - B_CRIT) < 0.06],
+    ...(R.planar ? [['CRITICAL b꜀', B_CRIT.toFixed(3) + ' rₛ']]
+                 : [['L_z · CARTER q', R.Lz.toFixed(3) + ' · ' + R.q.toFixed(3)]]),
+    ['CLOSEST r', R.rMin.toFixed(3) + ' rₛ' + (R.planar ? '' : ' (BL)')],
     ['TOTAL BEND', (R.bend * 180 / Math.PI).toFixed(1) + '°' + (R.bend > Math.PI ? ' · ' + (R.bend / (2 * Math.PI)).toFixed(2) + ' turns' : '')],
     ['NET DEFLECTION', R.outcome === 'escaped' ? R.defl.toFixed(2) + '°' : '—'],
     ['DISK HITS', inDisk.length ? inDisk.slice(0, 3).map(h => '#' + h.order + ' r ' + h.r.toFixed(1)).join(' · ') : 'NONE', inDisk.length > 0],
@@ -1247,6 +1408,7 @@ function frame(now){
   requestAnimationFrame(frame);
 }
 
+syncDiskEdge();
 buildUI();
 setRecNote();
 syncUI();
@@ -1261,11 +1423,12 @@ window.EventHorizon = {
   camera: goal,
   get time(){ return simTime; },
   set time(v){ simTime = +v || 0; },
-  set(o){ Object.assign(P, o); if('fov' in o) goal.fov = P.fov; if('roll' in o) goal.roll = P.roll; syncUI(); },
+  set(o){ Object.assign(P, o); for(const k in o) onParam(k); },
   preset: applyPreset,
   snapCamera(){ clampGoal(); Object.assign(cam, goal); },
   togglePanel, toggleHUD, snapshot, toggleRecording,
   releaseProbe, resetProbe,
+  kerr: { rPlus: () => kerrRPlus(spinA()), isco: s => kerrIsco(spinA(), s || 1), photonOrbit: s => kerrPhoton(spinA(), s || 1) },
   inspect(x, y){ if(!insp.mode) setInspectMode(true); inspectAt(x, y); return insp.res; },
   closeInspector(){ setInspectMode(false); },
 };

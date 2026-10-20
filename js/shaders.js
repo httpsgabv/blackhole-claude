@@ -43,6 +43,17 @@ uniform int   uSky;
 uniform float uStars;
 uniform float uGuides;
 
+/* Kerr metric. Ray paths use (uM, uA), which the "light bending" slider scales;
+   the disk's own orbital physics uses the true (uDiskM, uDiskA). r_s = 1. */
+uniform float uM;
+uniform float uA;
+uniform float uDiskM;
+uniform float uDiskA;
+uniform float uRCapture;    // rays inside this Boyer-Lindquist r are absorbed (just outside r+)
+uniform float uPhPro;       // prograde / retrograde circular photon orbits (equatorial)
+uniform float uPhRetro;
+uniform float uIsco;
+
 uniform vec3  uObsBeta;     // observer velocity relative to a local static observer (units of c)
 uniform float uObsBeam;     // apply observer Doppler beaming to the image
 uniform float uObsExpo;     // auto-exposure for beaming: 1 / D_max³
@@ -107,18 +118,21 @@ float diskLayer(float r, float ang, float seed){
   return n * 0.78 + s * 0.22;
 }
 
-/* Emission (premultiplied rgb) + opacity of the thin disk at equatorial hit p, ray dir d */
-vec4 diskSample(vec3 p, vec3 d, float rCam){
-  float r = length(p.xz);
+/* Emission (premultiplied rgb) + opacity of the thin disk at Boyer-Lindquist
+   radius r, azimuth phi. d is the (backward) ray direction in scene space,
+   b the photon's axial angular momentum p_phi, camE its energy measured by
+   the camera's zero-angular-momentum frame. */
+vec4 diskSample(float r, float phi, vec3 d, float b, float camE){
   if(r < uDiskIn * 0.8 || r > uDiskOut) return vec4(0.0);
   float x = (r - uDiskIn) / (uDiskOut - uDiskIn);
 
   float inner = smoothstep(uDiskIn * 0.82, uDiskIn * 1.06, r);
   float outer = 1.0 - smoothstep(0.3, 1.0, x);
 
-  /* Keplerian angular velocity Ω = sqrt(M / r³), M = 0.5 */
-  float omega = sqrt(0.5 / (r * r * r)) * uSpin;
-  float phi = atan(p.z, p.x);
+  /* Kerr circular orbit, sense s = uSpin relative to the hole's rotation:
+     Ω = s√M / (r^{3/2} + s a√M) */
+  float M = uDiskM, a = uDiskA, sqM = sqrt(M), r15 = r * sqrt(r);
+  float omega = uSpin * sqM / (r15 + uSpin * a * sqM);
 
   /* flow-map style: two phase-shifted layers so differential shear never winds up */
   const float P = 140.0;
@@ -135,13 +149,17 @@ vec4 diskSample(vec3 p, vec3 d, float rCam){
   float f = pow(rr, -0.75) * pow(1.0 - sqrt(1.0 / rr), 0.25) / 0.488;
   f = max(f, 0.18 * inner);
 
-  /* Relativistic Doppler + gravitational redshift */
-  vec3 vdir = normalize(vec3(-p.z, 0.0, p.x)) * uSpin;
-  float beta = clamp(sqrt(0.5 / max(r - 1.0, 0.05)), 0.0, 0.95) * uDoppler;
-  float gam = inversesqrt(1.0 - beta * beta);
-  float delta = 1.0 / (gam * (1.0 - beta * dot(vdir, -d)));
-  float grav = sqrt(max(1.0 - 1.0 / r, 1e-3)) / sqrt(max(1.0 - 1.0 / rCam, 1e-3));
-  float g = delta * mix(1.0, grav, uRedshift);
+  /* Exact frequency ratio g = E_camera / E_emitted, split into
+       gravity + frame dragging (camera ZAMO vs. emitter ZAMO) and
+       Doppler (emitter ZAMO vs. orbiting gas), so each can be dialled. */
+  float rad = r15 - 3.0 * M * sqrt(r) + 2.0 * uSpin * a * sqM;
+  float ut = (r15 + uSpin * a * sqM) / (pow(r, 0.75) * sqrt(max(rad, 0.02 * r15)));
+  float Eem = ut * (1.0 - omega * b);
+  float Dl = r * r - 2.0 * M * r + a * a;
+  float S2 = (r * r + a * a) * (r * r + a * a) - a * a * Dl;
+  float alE = r * sqrt(max(Dl, 1e-6) / S2), omE = 2.0 * M * a * r / S2;
+  float Ezamo = (1.0 - omE * b) / alE;
+  float g = clamp(mix(1.0, camE / Ezamo, uRedshift) * pow(max(Ezamo / Eem, 1e-3), uDoppler), 0.0, 12.0);
   float g4 = g * g * g * g;
 
   float alpha = 1.0 - exp(-dens * uDiskOpacity / max(abs(d.y), 0.06));
@@ -151,18 +169,17 @@ vec4 diskSample(vec3 p, vec3 d, float rCam){
   return vec4(hue * I * alpha, alpha);
 }
 
-/* Equatorial reference grid: 1 r_s rings, 30° spokes, photon sphere, ISCO */
-vec3 guides(vec3 p, float rCam){
-  float r = length(p.xz);
+/* Equatorial reference grid: 1 r_s rings, 30° spokes, photon orbits, ISCO */
+vec3 guides(float r, float phi, float rCam){
   if(r > 24.0) return vec3(0.0);
   float w = 0.0022 * rCam + 0.008;
-  float phi = atan(p.z, p.x);
   float ringD = abs(fract(r + 0.5) - 0.5);
   float spokeD = abs(fract(phi / (PI / 6.0) + 0.5) - 0.5) * (PI / 6.0) * r;
   float fade = 1.0 - smoothstep(14.0, 24.0, r);
   vec3 c = vec3(0.55, 0.65, 0.75) * 0.12 * (smoothstep(w, 0.0, ringD) + smoothstep(w, 0.0, spokeD) * step(1.0, r)) * fade;
-  c += vec3(0.35, 0.85, 1.0) * 1.2 * smoothstep(w * 1.6, 0.0, abs(r - 1.5));
-  c += vec3(1.0, 0.62, 0.28) * 1.2 * smoothstep(w * 1.6, 0.0, abs(r - 3.0));
+  c += vec3(0.35, 0.85, 1.0) * 1.2 * smoothstep(w * 1.6, 0.0, abs(r - uPhPro));
+  if(uPhRetro - uPhPro > 0.01) c += vec3(0.35, 0.85, 1.0) * 0.55 * smoothstep(w * 1.6, 0.0, abs(r - uPhRetro));
+  c += vec3(1.0, 0.62, 0.28) * 1.2 * smoothstep(w * 1.6, 0.0, abs(r - uIsco));
   return c;
 }
 
@@ -236,6 +253,71 @@ vec3 gridSky(vec3 d){
   return base + line * vec3(0.22, 0.5, 0.7) * 0.22;
 }
 
+/* ------------------------------------------------------------------ */
+/* Kerr null geodesics (Boyer-Lindquist), after James et al. 2015,    */
+/* "Gravitational lensing by spinning black holes ... Interstellar".  */
+/* State (r, θ, φ, p_r, p_θ); p_t = −1, b = p_φ and Carter q conserved. */
+/* H = Δp_r²/2ρ² + p_θ²/2ρ² − (R + ΔΘ)/(2Δρ²),                       */
+/* R = P² − Δ[(b − a)² + q], P = r² + a² − ab, Θ = q − cos²θ(b²/sin²θ − a²) */
+/* ------------------------------------------------------------------ */
+
+/* oblate-spheroidal map; the spin axis is the scene's +y (disk normal) */
+vec3 blToCart(float r, float th, float ph){
+  float s = sqrt(r * r + uA * uA) * sin(th);
+  return vec3(s * cos(ph), r * cos(th), s * sin(ph));
+}
+vec3 cartToBL(vec3 p){
+  float a2 = uA * uA, t = dot(p, p) - a2;
+  float r = sqrt(max(0.5 * (t + sqrt(t * t + 4.0 * a2 * p.y * p.y)), 1e-8));
+  return vec3(r, acos(clamp(p.y / r, -1.0, 1.0)), atan(p.z, p.x));
+}
+
+/* dX = (dr, dθ, dφ)/dζ, dP = (dp_r, dp_θ)/dζ */
+void kerrRHS(float r, float th, float pr, float pth, float b, float q, out vec3 dX, out vec2 dP){
+  float M = uM, a = uA, a2 = a * a;
+  float sn = max(sin(th), 1e-4), cs = cos(th);
+  float sn2 = sn * sn, cs2 = cs * cs;
+  float rho2 = r * r + a2 * cs2, ir2 = 1.0 / rho2, ir4 = ir2 * ir2;
+  float Dl = r * r - 2.0 * M * r + a2, Dc = max(Dl, 1e-6);
+  float Pp = r * r + a2 - a * b;
+  float K = (b - a) * (b - a) + q;
+  float R = Pp * Pp - Dl * K;
+  float Th = q - cs2 * (b * b / sn2 - a2);
+
+  dX = vec3(Dl * ir2 * pr, pth * ir2, (a * Pp / Dc + (b - a) + b * cs2 / sn2) * ir2);
+
+  float dD = 2.0 * r - 2.0 * M;
+  float dR = 4.0 * r * Pp - dD * K;
+  float dAr = (dD * rho2 - 2.0 * r * Dl) * 0.5 * ir4;
+  float dBr = -r * ir4;
+  float dCr = 0.5 * dR * ir2 / Dc - 0.5 * R * (dD * rho2 + 2.0 * r * Dl) * ir4 / (Dc * Dc) - Th * r * ir4;
+
+  float drho = -2.0 * a2 * cs * sn;
+  float dTh = 2.0 * cs * (b * b / (sn2 * sn) - a2 * sn);
+  float dAt = -0.5 * Dl * drho * ir4;
+  float dBt = -0.5 * drho * ir4;
+  float dCt = -0.5 * R * drho * ir4 / Dc + 0.5 * dTh * ir2 - 0.5 * Th * drho * ir4;
+
+  dP = vec2(-(dAr * pr * pr + dBr * pth * pth - dCr),
+            -(dAt * pr * pr + dBt * pth * pth - dCt));
+}
+
+void kerrStep(inout vec3 X, inout vec2 Pm, float b, float q, float h){
+  vec3 k1x, k2x, k3x, k4x; vec2 k1p, k2p, k3p, k4p;
+  kerrRHS(X.x, X.y, Pm.x, Pm.y, b, q, k1x, k1p);
+  vec3 X2 = X + 0.5 * h * k1x; vec2 P2 = Pm + 0.5 * h * k1p;
+  kerrRHS(X2.x, X2.y, P2.x, P2.y, b, q, k2x, k2p);
+  vec3 X3 = X + 0.5 * h * k2x; vec2 P3 = Pm + 0.5 * h * k2p;
+  kerrRHS(X3.x, X3.y, P3.x, P3.y, b, q, k3x, k3p);
+  vec3 X4 = X + h * k3x; vec2 P4 = Pm + h * k3p;
+  kerrRHS(X4.x, X4.y, P4.x, P4.y, b, q, k4x, k4p);
+  X += h / 6.0 * (k1x + 2.0 * k2x + 2.0 * k3x + k4x);
+  Pm += h / 6.0 * (k1p + 2.0 * k2p + 2.0 * k3p + k4p);
+  /* a ray through the axis comes out on the other side */
+  if(X.y < 0.0){ X.y = -X.y; X.z += PI; Pm.y = -Pm.y; }
+  else if(X.y > PI){ X.y = 2.0 * PI - X.y; X.z += PI; Pm.y = -Pm.y; }
+}
+
 vec3 sky(vec3 d){
   if(uSky == 0) return starSky(d);
   if(uSky == 1) return gridSky(d);
@@ -259,34 +341,60 @@ void main(){
     rd = normalize(rd + (gb - 1.0) * dot(rd, bh) * bh - gb * uObsBeta);
   }
 
-  vec3 pos = uCamPos, vel = rd;
+  /* ---- camera in Boyer-Lindquist, frame of the zero-angular-momentum observer */
+  vec3 X = cartToBL(uCamPos);
   float rCam = length(uCamPos);
-  vec3 hv = cross(pos, vel);
-  /* photon orbit eq. u'' + u = 3/2 r_s u² <=> x'' = -3/2 h² x / r⁵ */
-  float k = -1.5 * dot(hv, hv) * uGravity;
+  float a = uA, a2 = a * a, M = uM;
+  float cr = X.x, sn = sin(X.y), cs = cos(X.y);
+  float sq = sqrt(cr * cr + a2);
+  vec3 er = normalize(vec3(cr / sq * sn * cos(X.z), cs, cr / sq * sn * sin(X.z)));
+  vec3 et = normalize(vec3(sq * cs * cos(X.z), -cr * sn, sq * cs * sin(X.z)));
+  vec3 ep = vec3(-sin(X.z), 0.0, cos(X.z));
+  float rho2 = cr * cr + a2 * cs * cs, Dl = cr * cr - 2.0 * M * cr + a2;
+  float S2 = (cr * cr + a2) * (cr * cr + a2) - a2 * Dl * sn * sn;
+  float lapse = sqrt(rho2 * Dl / S2), drag = 2.0 * M * a * cr / S2, varpi = sqrt(S2 / rho2) * sn;
+
+  /* the arriving photon travels along n = −rd; build its momentum, then trace it back */
+  vec3 n = -rd;
+  float nr = dot(n, er), nt = dot(n, et), np = dot(n, ep);
+  float camE = 1.0 / (lapse + drag * varpi * np);          // energy seen by the camera frame
+  vec2 Pm = vec2(camE * sqrt(rho2 / Dl) * nr, camE * sqrt(rho2) * nt);
+  float b = camE * varpi * np;
+  /* rays that skim the spin axis this closely are taken through it exactly:
+     the θ equation is too stiff to resolve there, and the error is sub-pixel */
+  if(abs(b) < 2e-3) b = 0.0;
+  float q = Pm.y * Pm.y + cs * cs * (b * b / max(sn * sn, 1e-8) - a2);
 
   vec3 col = vec3(0.0);
   float alpha = 0.0;
   bool captured = false, escaped = false;
+  vec3 cPrev = blToCart(X.x, X.y, X.z), dirOut = rd;
 
   for(int i = 0; i < 1200; i++){
     if(i >= uMaxSteps) break;
-    float r = length(pos);
-    if(r < 1.0){ captured = true; break; }
-    if(r > uEscape && dot(pos, vel) > 0.0){ escaped = true; break; }
+    if(X.x < uRCapture){ captured = true; break; }
 
-    float dt = max(uStepK * r, 0.01);
-    vec3 acc = k * pos / pow(r, 5.0);
-    vec3 np = pos + vel * dt + 0.5 * acc * dt * dt;
-    vec3 nacc = k * np / pow(length(np), 5.0);
-    vec3 nv = vel + 0.5 * (acc + nacc) * dt;
+    vec3 X0 = X;
+    /* adaptive step: proportional to r, but never moving r more than a quarter
+       of the way to the horizon (p_r grows like 1/Δ there), and finer near the
+       axis where the θ equation stiffens */
+    float rdot = (X.x * X.x - 2.0 * M * X.x + a2) / (X.x * X.x + a2 * cos(X.y) * cos(X.y)) * Pm.x;
+    float h = min(clamp(uStepK * 1.6 * X.x, 0.004, 4.0),
+                  0.25 * max(X.x - uRCapture + 0.02, 1e-4) / max(abs(rdot), 1e-6));
+    h *= -clamp(sin(X.y) * 5.0, 0.005, 1.0);
+    kerrStep(X, Pm, b, q, h);
+    if(!(X.x > 0.0) || !(abs(Pm.x) < 1e8) || !(abs(Pm.y) < 1e8) || !(abs(X.z) < 1e6)){ captured = true; break; }
+    vec3 c1 = blToCart(X.x, X.y, X.z);
+    vec3 seg = c1 - cPrev;
+    if(dot(seg, seg) > 1e-12) dirOut = normalize(seg);
 
     float tDisk = 2.0, tPlan = 2.0;
-    if(pos.y * np.y < 0.0) tDisk = pos.y / (pos.y - np.y);
+    float cs0 = cos(X0.y), cs1 = cos(X.y);
+    if(cs0 * cs1 < 0.0) tDisk = cs0 / (cs0 - cs1);
     if(uPlanetOn > 0.5){
       /* segment vs. stretched ellipsoid, solved in the probe's sphere space */
-      vec3 o = probeSpace(pos - uPlanet.xyz);
-      vec3 e = probeSpace(np - pos);
+      vec3 o = probeSpace(cPrev - uPlanet.xyz);
+      vec3 e = probeSpace(seg);
       float A = dot(e, e), B = dot(o, e), C = dot(o, o) - uPlanet.w * uPlanet.w;
       float disc = B * B - A * C;
       if(disc > 0.0){
@@ -297,28 +405,28 @@ void main(){
     }
 
     if(tDisk <= 1.0 && tDisk < tPlan){
-      vec3 hp = mix(pos, np, tDisk);
-      vec3 hd = normalize(mix(vel, nv, tDisk));
-      if(uGuides > 0.5) col += (1.0 - alpha * 0.8) * guides(hp, rCam);
+      float rh = mix(X0.x, X.x, tDisk), ph = mix(X0.z, X.z, tDisk);
+      if(uGuides > 0.5) col += (1.0 - alpha * 0.8) * guides(rh, ph, rCam);
       if(uDiskOn > 0.5){
-        vec4 s = diskSample(hp, hd, rCam);
-        col += (1.0 - alpha) * s.rgb;
-        alpha += (1.0 - alpha) * s.a;
+        vec4 sm = diskSample(rh, ph, dirOut, b, camE);
+        col += (1.0 - alpha) * sm.rgb;
+        alpha += (1.0 - alpha) * sm.a;
       }
     }
     if(tPlan <= 1.0){
-      vec3 hp = mix(pos, np, tPlan);
-      col += (1.0 - alpha) * shadePlanet(hp, normalize(mix(vel, nv, tPlan)));
+      vec3 hp = mix(cPrev, c1, tPlan);
+      col += (1.0 - alpha) * shadePlanet(hp, dirOut);
       alpha = 1.0;
       break;
     }
     if(alpha > 0.995) break;
-    pos = np; vel = nv;
+    if(X.x > uEscape && X.x > X0.x){ escaped = true; break; }
+    cPrev = c1;
   }
 
   if(!captured && alpha < 1.0){
-    float fade = escaped ? 1.0 : smoothstep(2.0, 6.0, length(pos));
-    col += (1.0 - alpha) * sky(normalize(vel)) * fade;
+    float fade = escaped ? 1.0 : smoothstep(2.0, 6.0, X.x);
+    col += (1.0 - alpha) * sky(dirOut) * fade;
   }
   if(uObsBeam > 0.5 && D != 1.0){
     /* bolometric intensity ∝ D⁴, auto-exposed so the brightest direction

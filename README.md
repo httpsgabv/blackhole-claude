@@ -4,7 +4,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/RENDER-WEBGL_2-ffb36b?style=flat-square&labelColor=0b0c10" alt="WebGL 2">
-  <img src="https://img.shields.io/badge/METRIC-SCHWARZSCHILD-ffb36b?style=flat-square&labelColor=0b0c10" alt="Schwarzschild metric">
+  <img src="https://img.shields.io/badge/METRIC-KERR-ffb36b?style=flat-square&labelColor=0b0c10" alt="Kerr metric">
   <img src="https://img.shields.io/badge/BUILD-NONE-e9e6df?style=flat-square&labelColor=0b0c10" alt="No build step">
   <img src="https://img.shields.io/badge/DEPS-ZERO-e9e6df?style=flat-square&labelColor=0b0c10" alt="Zero dependencies">
 </p>
@@ -17,7 +17,7 @@
 
 <br>
 
-Every pixel is a photon traced **backwards** from the camera through curved spacetime around a non-rotating black hole. The arched halo, the thin photon ring and the lopsided glow of the disk are not painted on. They fall out of the geodesic equation, integrated on the GPU at interactive frame rates.
+Every pixel is a photon traced **backwards** from the camera through the curved spacetime of a **spinning (Kerr) black hole**. The arched halo, the thin photon ring and the lopsided glow of the disk are not painted on. They fall out of the geodesic equation, integrated on the GPU at interactive frame rates.
 
 Built for learning: switch gravity off for light, swap the stars for a coordinate grid, draw the photon sphere and ISCO on the disk plane, and watch the readouts for how fast your clock runs.
 
@@ -85,6 +85,29 @@ Then open **http://localhost:5179**. Opening `index.html` directly also works. A
 
 ## `02` &nbsp;EXPERIMENTS
 
+### Spin the hole &nbsp;<sub><code>SPIN a/M</code></sub>
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/media/spin-0.jpg" alt="Non-spinning hole against a coordinate grid: round shadow" width="100%"></td>
+    <td width="50%"><img src="docs/media/spin-0998.jpg" alt="Hole at a/M 0.998 against the same grid: D-shaped shadow" width="100%"></td>
+  </tr>
+  <tr>
+    <td><sub><code>a/M 0</code> &nbsp;SCHWARZSCHILD · ROUND SHADOW</sub></td>
+    <td><sub><code>a/M 0.998</code> &nbsp;KERR · FLATTENED WHERE THE HOLE TURNS TOWARD YOU</sub></td>
+  </tr>
+</table>
+
+<p align="center">
+  <img src="docs/media/spin-sweep.gif" alt="Spin rising from 0 to 0.998: the disk's inner edge moves in and the shadow deforms" width="100%">
+</p>
+<p align="center"><sub><code>a/M 0 → 0.998</code> &nbsp;INNER EDGE LOCKED TO THE ISCO · 3 rₛ → 0.62 rₛ</sub></p>
+
+Real black holes spin, and spin changes almost everything near the hole. The horizon shrinks from 1 to 0.53 rₛ. Gas orbiting with the spin can come much closer (the ISCO falls from 3 to 0.62 rₛ), so the disk gets hotter and brighter near the hole. Spacetime is dragged around: inside the **ergosphere** nothing can hold still against the distant stars, and a static camera there is swept along. Light moving with the rotation can pass closer than light moving against it, which flattens one side of the shadow into a "D". The default is a/M = 0.6, the value Interstellar's effects team used for Gargantua.
+
+
+<sub>The probe, inspector and observer images below use a/M = 0, so their numbers match the Schwarzschild formulas.</sub>
+
 ### Drop the probe &nbsp;<sub><code>D</code></sub>
 
 <table>
@@ -141,7 +164,7 @@ What you see depends on how you move. The camera can **hover**, ride a **circula
 
 | &nbsp; | Region | Contents |
 |:--|:--|:--|
-| `▣` | **Telemetry** · top left | Camera radius, physical distance, inclination, observer mode and speed, observer clock rate, escape velocity; probe state, radius, clock rate, proper time, redshift and tidal force; Schwarzschild radius, Hawking temperature, evaporation time, frame rate |
+| `▣` | **Telemetry** · top left | Camera radius, physical distance, inclination, observer mode and speed, observer clock rate, escape velocity; probe state, radius, clock rate, proper time, redshift and tidal force; Schwarzschild radius, spin and horizon radius, frame-dragging period (flags the ergosphere), Hawking temperature, evaporation time, frame rate |
 | `⌖` | **Ray inspector** · left | Orbital-plane diagram of the clicked ray, its outcome and numbers, and a plain-language reading |
 | `≡` | **Control matrix** · right | Six numbered sections: Simulation, Spacetime, Accretion Disk, Camera, Render, Export. Double-click a slider to reset it |
 | `▶` | **Timeline** · bottom | Reset, slower/reverse, play/pause, faster, step, rate, simulation time in rₛ/c and in physical units, probe orbit phase |
@@ -156,31 +179,35 @@ Units throughout: $r_s = 2GM/c^2 = 1$ and $c = 1$.
 <table>
 <tr><td width="34%"><code>GEODESICS</code></td><td>
 
-Photon paths obey the Schwarzschild orbit equation. Written in Cartesian form, it becomes a force law that can be stepped with velocity Verlet, using a step size proportional to $r$:
+Rays follow Kerr null geodesics in Boyer–Lindquist coordinates, using the Hamiltonian form from the Interstellar paper (James et al. 2015). Each ray carries conserved $b = p_\phi$ and Carter constant $q$:
 
-$$\ddot{\mathbf{x}} = -\frac{3}{2}\,\frac{h^2\,\mathbf{x}}{r^5}, \qquad \mathbf{h} = \mathbf{x}\times\dot{\mathbf{x}}$$
+$$H = \frac{\Delta}{2\rho^2}p_r^2 + \frac{p_\theta^2}{2\rho^2} - \frac{R + \Delta\Theta}{2\Delta\rho^2}, \qquad \dot x^i = \frac{\partial H}{\partial p_i}, \quad \dot p_i = -\frac{\partial H}{\partial x^i}$$
+
+$$R = (r^2 + a^2 - ab)^2 - \Delta\left[(b-a)^2 + q\right], \qquad \Theta = q - \cos^2\theta\left(\frac{b^2}{\sin^2\theta} - a^2\right)$$
+
+Here $\Delta = r^2 - 2Mr + a^2$ and $\rho^2 = r^2 + a^2\cos^2\theta$. The state is stepped with RK4, at a step that shrinks near the horizon (where $p_r \sim 1/\Delta$) and near the spin axis. The camera's reference frame is the zero-angular-momentum observer.
 
 </td></tr>
 <tr><td><code>HORIZON · SHADOW</code></td><td>
 
-Rays reaching $r = 1$ are captured. The visible shadow is larger, at $b_c = \tfrac{3\sqrt3}{2}\,r_s \approx 2.6\,r_s$, because rays below that impact parameter spiral in.
+Rays reaching the horizon $r_+ = M + \sqrt{M^2 - a^2}$ are captured. Without spin the visible shadow is larger, at $b_c = \tfrac{3\sqrt3}{2}\,r_s \approx 2.6\,r_s$, because rays below that impact parameter spiral in. With spin the edge depends on direction, giving the D-shaped shadow.
 
 </td></tr>
 <tr><td><code>PHOTON SPHERE</code></td><td>
 
-At $r = 1.5\,r_s$ light can circle the hole. Rays that skim it stack up into the thin photon ring and the nested higher-order images of the disk.
+Without spin, light can circle the hole at $r = 1.5\,r_s$. With spin the equatorial photon orbits split, $r_{ph} = 2M\{1 + \cos[\tfrac23\arccos(\mp a/M)]\}$: closer in for light moving with the rotation, farther out for light moving against it. Rays that skim it stack up into the thin photon ring and the nested higher-order images of the disk.
 
 </td></tr>
 <tr><td><code>DISK · ISCO</code></td><td>
 
-A thin disk in Keplerian rotation, $\Omega = \sqrt{GM/r^3}$, with a Novikov–Thorne-like temperature profile and an inner edge at the ISCO, $r = 3\,r_s$. A two-phase flow-map keeps differential shear from winding the texture up.
+A thin disk on Kerr circular orbits, $\Omega = \pm\sqrt{M}/(r^{3/2} \pm a\sqrt{M})$, with a Novikov–Thorne-like temperature profile and its inner edge locked to the ISCO (Bardeen–Press–Teukolsky): 3 rₛ without spin, 0.62 rₛ prograde at a/M = 0.998. A two-phase flow-map keeps differential shear from winding the texture up.
 
 </td></tr>
 <tr><td><code>DOPPLER · REDSHIFT</code></td><td>
 
-Gas orbits at $\beta = \sqrt{0.5/(r-1)}$, which is about $0.5c$ at the ISCO. The observed intensity scales as $g^4$:
+The redshift is exact for each ray, using its conserved $b$. It splits into gravity plus frame dragging (camera frame vs. the emitter's local frame) and Doppler (local frame vs. orbiting gas). Observed intensity scales as $g^4$:
 
-$$g = \frac{1}{\gamma\,(1-\beta\cos\theta)}\;\sqrt{\frac{1-1/r}{1-1/r_{cam}}}$$
+$$g = \frac{E_{cam}}{E_{emit}} = \frac{(1-\omega_{c}b)/\alpha_{c}}{u^t\,(1-\Omega b)}$$
 
 </td></tr>
 <tr><td><code>FREE FALL</code></td><td>
@@ -245,11 +272,13 @@ Every astrophysical hole is far colder than the 2.7 K microwave background. The 
 | | Probe orbit | 2 – 18 rₛ, 0 – 80° | Circular geodesic, lensed like everything else |
 | | Angular momentum kept | 0 – 98% | Share of orbital L kept on release |
 | | Tidal stretch | on / off | Visual, exaggerated; the telemetry gives the real value |
-| Spacetime | Light bending | 0 – 100% | Multiplies the geodesic curvature |
+| Spacetime | Spin a/M | 0 – 0.998 | Kerr spin parameter; 0.6 by default |
+| | Light bending | 0 – 100% | Scales the mass (and spin) the rays feel |
 | | Doppler beaming | 0 – 100% | Scales the disk velocity used for beaming |
 | | Gravitational redshift | on / off | |
 | | Background | Stars · Grid · Void | |
-| Accretion disk | Palette | Cinematic · Blackbody | Blackbody also sets Doppler to 100% |
+| Accretion disk | Inner edge at ISCO | on / off | Follows the spin and the rotation sense |
+| | Palette | Cinematic · Blackbody | Blackbody also sets Doppler to 100% |
 | | Temperature, inner/outer edge, luminosity, optical depth, turbulence, rotation | | |
 | Camera | Observer | Static · Orbit · Free fall · Boost | Aberration and Doppler from the camera's own motion |
 | | Boost speed | 0 – 0.95c | Boost mode only |
@@ -283,6 +312,8 @@ EventHorizon.time = 0;
 EventHorizon.releaseProbe();          // resetProbe() to recall it
 EventHorizon.inspect(640, 300);       // trace the ray at CSS pixel (x, y)
 EventHorizon.set({ observer: 'boost', obsBeta: 0.9 });
+EventHorizon.set({ spinA: 0.998 });     // Kerr spin a/M
+EventHorizon.kerr.isco(1);            // prograde ISCO in r_s (also rPlus(), photonOrbit(±1))
 EventHorizon.snapshot();
 ```
 
@@ -293,8 +324,8 @@ EventHorizon.snapshot();
 ```
 index.html        HUD markup, field notes
 css/style.css     interface
-js/shaders.js     geodesic tracer, disk, sky, bloom, tone mapping (GLSL ES 3.0)
-js/main.js        render graph, camera, observer modes, probe geodesic, ray inspector, UI, export
+js/shaders.js     Kerr geodesic tracer, disk, sky, bloom, tone mapping (GLSL ES 3.0)
+js/main.js        render graph, Kerr helpers, camera, observer modes, probe, ray inspector, UI, export
 docs/             README media
 ```
 

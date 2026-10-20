@@ -65,7 +65,7 @@
 
   <!-- title block -->
   <rect class="pulse" x="64" y="88" width="9" height="9" fill="#ffb36b"/>
-  <text x="90" y="98" fill="#e9e6df" font-size="15" letter-spacing="7" font-weight="500">SCHWARZSCHILD · RAY-TRACED</text>
+  <text x="90" y="98" fill="#e9e6df" font-size="15" letter-spacing="7" font-weight="500">KERR · RAY-TRACED</text>
   <text x="62" y="160" fill="#e9e6df" font-size="54" letter-spacing="22" font-weight="500">EVENT HORIZON</text>
   <path d="M64 186h560" stroke="#e9e6df" stroke-opacity=".14"/>
   <path d="M64 186h64" stroke="#ffb36b"/>
