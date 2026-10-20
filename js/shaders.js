@@ -69,6 +69,20 @@ uniform float uJetOpen;     // widening per unit height (cone)
 uniform float uJetLen;
 uniform float uJetBase;     // height where the jet starts (just outside the horizon)
 
+/* scene: 0 = Kerr black hole, 1 = binary black hole, 2 = wormhole */
+uniform int   uScene;
+uniform float uWormB0;      // wormhole throat radius
+uniform float uWormL;       // camera's signed proper distance from the throat (<0: other universe)
+uniform vec4  uBH1;         // binary: hole 1 position + Schwarzschild radius
+uniform vec4  uBH2;         // hole 2 (w = 0 after merger)
+uniform vec4  uGW;          // orbital phase ψ, angular frequency Ω, separation a, displayed strain amplitude
+uniform float uGwShow;      // draw the wave pattern in the orbital plane
+uniform float uGwLens;      // let the wave bend background light (exaggerated)
+uniform float uPulsarOn;
+uniform vec4  uPulsar;      // position + radius
+uniform vec4  uPulsarSpin;  // spin rate, magnetic tilt, phase at t = 0, beam half-width
+uniform float uPulsarBeams; // draw the lighthouse beams (visual aid)
+
 uniform vec3  uObsBeta;     // observer velocity relative to a local static observer (units of c)
 uniform float uObsBeam;     // apply observer Doppler beaming to the image
 uniform float uObsExpo;     // auto-exposure for beaming: 1 / D_max³
@@ -442,10 +456,158 @@ void kerrStep(inout vec3 X, inout vec2 Pm, inout float T, float b, float q, floa
   else if(X.y > PI){ X.y = 2.0 * PI - X.y; X.z += PI; Pm.y = -Pm.y; }
 }
 
+vec3 sky(vec3 d);   // defined below
+
+/* the sky of the universe on the other side of a wormhole: a rotated star
+   field, different colours and a bright nebula, so the two are easy to tell apart */
+vec3 skyOther(vec3 d){
+  if(uSky == 2) return vec3(0.0);
+  vec3 q = vec3(d.z, -d.x, d.y);
+  if(uSky == 1) return gridSky(q) * vec3(1.6, 0.55, 1.25);
+  vec3 c = starSky(q) * vec3(0.8, 0.9, 1.25);
+  float neb = fbm(q * 2.6 + 8.0), neb2 = fbm(q * 5.0 - 3.0);
+  c += vec3(0.35, 0.10, 0.45) * pow(neb, 3.0) * 1.6 + vec3(0.05, 0.25, 0.32) * pow(neb2, 4.0) * 1.8;
+  float gal = max(dot(q, normalize(vec3(0.5, 0.35, 0.8))), 0.0);
+  c += vec3(1.0, 0.8, 0.6) * (pow(gal, 220.0) * 6.0 + pow(gal, 18.0) * 0.25);
+  return c * uStars;
+}
+
+/* ------------------------------------------------------------------ */
+/* Wormhole (Ellis): ds² = −dt² + dl² + (b₀² + l²) dΩ². Light moves in a */
+/* plane; with r² = b₀² + l²: l'' = h² l / r⁴, φ' = h / r². l < 0 is the */
+/* other universe.                                                      */
+/* ------------------------------------------------------------------ */
+vec3 renderWormhole(vec3 rd){
+  float b0 = uWormB0, l = uWormL;
+  vec3 e1 = normalize(uCamPos);
+  vec3 perp = rd - dot(rd, e1) * e1;
+  float sp = length(perp);
+  vec3 e2 = sp > 1e-6 ? perp / sp : normalize(cross(e1, vec3(0.3, 1.0, 0.2)));
+  float r = sqrt(b0 * b0 + l * l);
+  float side0 = l >= 0.0 ? 1.0 : -1.0;
+  float pl = side0 * dot(rd, e1);          // dl/dλ: "outward" means |l| growing on either side
+  float h = r * sp;                       // angular momentum (impact parameter)
+  float phi = 0.0;
+  float lFar = max(60.0, 3.0 * abs(l));
+  for(int i = 0; i < 800; i++){
+    if(abs(l) > lFar && l * pl > 0.0) break;
+    float dl = 0.04 * sqrt(b0 * b0 + l * l) + 0.002;
+    /* RK4 on (l, p_l, φ) */
+    float r2 = b0 * b0 + l * l;
+    float k1l = pl, k1p = h * h * l / (r2 * r2), k1f = h / r2;
+    float l2 = l + 0.5 * dl * k1l, p2 = pl + 0.5 * dl * k1p, q2 = b0 * b0 + l2 * l2;
+    float k2l = p2, k2p = h * h * l2 / (q2 * q2), k2f = h / q2;
+    float l3 = l + 0.5 * dl * k2l, p3 = pl + 0.5 * dl * k2p, q3 = b0 * b0 + l3 * l3;
+    float k3l = p3, k3p = h * h * l3 / (q3 * q3), k3f = h / q3;
+    float l4 = l + dl * k3l, p4 = pl + dl * k3p, q4 = b0 * b0 + l4 * l4;
+    float k4l = p4, k4p = h * h * l4 / (q4 * q4), k4f = h / q4;
+    l += dl / 6.0 * (k1l + 2.0 * k2l + 2.0 * k3l + k4l);
+    pl += dl / 6.0 * (k1p + 2.0 * k2p + 2.0 * k3p + k4p);
+    phi += dl / 6.0 * (k1f + 2.0 * k2f + 2.0 * k3f + k4f);
+  }
+  /* far out space is flat: turn (position angle, radial and angular speed) into a direction */
+  float R = sqrt(b0 * b0 + l * l);
+  float dr = (l / R) * pl;
+  vec2 v2 = dr * vec2(cos(phi), sin(phi)) + (h / R) * vec2(-sin(phi), cos(phi));
+  vec3 d = normalize(v2.x * e1 + v2.y * e2);
+  return l >= 0.0 ? sky(d) : skyOther(d);
+}
+
+/* ------------------------------------------------------------------ */
+/* Binary black hole (approximation). Each hole bends light with the  */
+/* exact single-hole law x'' = −(3/2) r_s h² x / r⁵; the two are simply */
+/* added, which is not exact but captures double shadows and rings.     */
+/* The gravitational-wave field h ∝ (aΩ)²/r · cos[2(ψ − Ωr − φ)] spirals */
+/* out of the orbit; its gradient can nudge background light (ripple).  */
+/* ------------------------------------------------------------------ */
+vec3 bhAccel(vec3 pos, vec3 vel, vec4 bh){
+  if(bh.w <= 0.0) return vec3(0.0);
+  vec3 d = pos - bh.xyz;
+  float r = length(d);
+  vec3 hv = cross(d, vel);
+  return -1.5 * bh.w * dot(hv, hv) * d / pow(r, 5.0);
+}
+/* wave amplitude and phase at a point (orbit in the xz-plane) */
+vec2 gwField(vec3 p){
+  float r = max(length(p), 1e-3), rho = max(length(p.xz), 1e-3);
+  float cth = p.y / r;
+  float A = uGW.w * (uGW.z * uGW.y) * (uGW.z * uGW.y) / max(r, uGW.z) * 0.5 * (1.0 + cth * cth);
+  float Phi = 2.0 * (uGW.x - uGW.y * r - atan(p.z, p.x));
+  return vec2(A, Phi);
+}
+vec3 renderBinary(vec3 rd){
+  vec3 pos = uCamPos, vel = rd, col = vec3(0.0);
+  bool captured = false, escaped = false;
+  float rCam = length(uCamPos);
+  int budget = uMaxSteps * 2;
+  for(int i = 0; i < 2400; i++){
+    if(i >= budget) break;
+    float r1 = length(pos - uBH1.xyz), r2 = uBH2.w > 0.0 ? length(pos - uBH2.xyz) : 1e9;
+    if(r1 < uBH1.w || r2 < uBH2.w){ captured = true; break; }
+    if(length(pos) > uEscape && dot(pos, vel) > 0.0){ escaped = true; break; }
+    float dt = clamp(uStepK * min(r1 / max(uBH1.w, 1e-3), r2 / max(uBH2.w, 1e-3)) * 0.6, 0.004, 3.0);
+    dt = min(dt, uStepK * length(pos) + 0.05);
+    vec3 acc = bhAccel(pos, vel, uBH1) + bhAccel(pos, vel, uBH2);
+    if(uGwLens > 0.0){
+      /* transverse gradient of the wave field deflects the ray a little */
+      vec2 f = gwField(pos);
+      float rr = max(length(pos), 1e-3), rho = length(pos.xz);
+      /* soften the azimuthal term near the orbital axis, where 2φ is undefined */
+      float rhoS = sqrt(rho * rho + uGW.z * uGW.z);
+      vec3 rh = pos / rr, ph = vec3(-pos.z, 0.0, pos.x) / max(rho, 1e-3);
+      vec3 grad = -f.x * sin(f.y) * (-2.0 * uGW.y * rh - 2.0 * ph * rho / (rhoS * rhoS));
+      vec3 vn = normalize(vel);
+      acc += uGwLens * dot(vel, vel) * (grad - dot(grad, vn) * vn);
+    }
+    vec3 np = pos + vel * dt + 0.5 * acc * dt * dt;
+    vec3 nacc = bhAccel(np, vel, uBH1) + bhAccel(np, vel, uBH2);
+    vec3 nv = vel + 0.5 * (acc + nacc) * dt;
+    /* wave pattern where the ray crosses the orbital plane */
+    if(uGwShow > 0.5 && pos.y * np.y < 0.0){
+      vec3 hp = mix(pos, np, pos.y / (pos.y - np.y));
+      float rh = length(hp);
+      if(rh > uGW.z * 0.8 && rh < 0.9 * uEscape){
+        vec2 f = gwField(hp);
+        float crest = pow(max(cos(f.y), 0.0), 6.0);
+        /* fade out well inside the escape radius, where rays stop being traced */
+        float fade = smoothstep(uGW.z * 0.8, uGW.z * 1.6, rh) * (1.0 - smoothstep(0.45 * uEscape, 0.85 * uEscape, rh));
+        col += vec3(0.3, 0.85, 1.0) * crest * fade * clamp(f.x / max(uGW.w, 1e-6) * 4.0, 0.15, 1.0) * 0.55;
+      }
+    }
+    pos = np; vel = nv;
+  }
+  if(!captured){
+    float fade = escaped ? 1.0 : 0.6;
+    col += sky(normalize(vel)) * fade;
+  }
+  return col;
+}
+
 vec3 sky(vec3 d){
   if(uSky == 0) return starSky(d);
   if(uSky == 1) return gridSky(d);
   return vec3(0.0);
+}
+
+/* observer motion: bolometric intensity ∝ D⁴, auto-exposed so the brightest
+   direction does not saturate; hue pushed blue ahead, red behind */
+vec3 observerBeam(vec3 col, float D){
+  if(uObsBeam < 0.5 || D == 1.0) return col;
+  col *= min(D * D * D * D, 1e4) * uObsExpo;
+  return col * (D > 1.0 ? mix(vec3(1.0), vec3(0.72, 0.88, 1.3), clamp((D - 1.0) * 0.8, 0.0, 1.0))
+                        : mix(vec3(1.0), vec3(1.25, 0.55, 0.3), clamp((1.0 - D) * 1.6, 0.0, 1.0)));
+}
+
+/* pulsar: magnetic axis at time t (spin axis = +y) */
+vec3 pulsarAxis(float t){
+  float a = uPulsarSpin.z + uPulsarSpin.x * t, tilt = uPulsarSpin.y;
+  return vec3(sin(tilt) * cos(a), cos(tilt), sin(tilt) * sin(a));
+}
+/* beam strength for light leaving the pulsar along e (both magnetic poles) */
+float pulsarBeam(vec3 e, float t){
+  float c = abs(dot(e, pulsarAxis(t)));
+  float ang = acos(clamp(c, 0.0, 1.0));
+  return exp(-0.5 * ang * ang / (uPulsarSpin.w * uPulsarSpin.w));
 }
 
 void main(){
@@ -463,6 +625,12 @@ void main(){
     vec3 bh = uObsBeta * inversesqrt(b2);
     D = 1.0 / (gb * (1.0 - dot(uObsBeta, rd)));
     rd = normalize(rd + (gb - 1.0) * dot(rd, bh) * bh - gb * uObsBeta);
+  }
+
+  if(uScene != 0){
+    vec3 c = uScene == 2 ? renderWormhole(rd) : renderBinary(rd);
+    fragColor = vec4(observerBeam(c, D), 1.0);
+    return;
   }
 
   /* ---- camera in Boyer-Lindquist, frame of the zero-angular-momentum observer */
@@ -527,6 +695,11 @@ void main(){
       float w = sqrt(Pm.y * Pm.y + b * b / (snA * snA));
       h = min(h, 0.3 * snA * (X.x * X.x + a2 * cos(X.y) * cos(X.y)) / max(w, 1e-6));
     }
+    if(uPulsarOn > 0.5 && uPulsarBeams > 0.5){
+      /* near the pulsar, step finely enough to catch its thin beams */
+      float dpx = length(cPrev - uPulsar.xyz);
+      if(dpx < 9.0) h = min(h, max(0.3 * (0.04 + 0.07 * dpx), 0.01));
+    }
     if(uJetOn > 0.5){
       /* inside or near a jet, step a fraction of its width */
       float ayj = abs(cPrev.y), wj = jetWidth(ayj);
@@ -575,6 +748,38 @@ void main(){
         alpha += (1.0 - alpha) * sm.a;
       }
     }
+    if(uPulsarOn > 0.5){
+      /* the neutron star itself: its brightness is the beam strength for the
+         actual (bent) direction this light left in, at the time it left */
+      vec3 oc = cPrev - uPulsar.xyz;
+      float L2 = dot(seg, seg);
+      float B = dot(oc, seg), C = dot(oc, oc) - uPulsar.w * uPulsar.w, disc = B * B - L2 * C;
+      if(disc > 0.0 && L2 > 1e-12){
+        float sh = (-B - sqrt(disc)) / L2;
+        if((sh >= 0.0 && sh <= 1.0) || C < 0.0){
+          float th = clamp(sh, 0.0, 1.0);
+          float te = uTime - (mix(T0, T, th) - uDelayRef);
+          float beam = pulsarBeam(-dirOut, te);
+          vec3 hp = mix(cPrev, c1, th);
+          float limb = 0.55 + 0.45 * abs(dot(normalize(hp - uPulsar.xyz), dirOut));
+          col += (1.0 - alpha) * vec3(0.75, 0.88, 1.0) * (0.35 * limb + 14.0 * beam);
+          alpha = 1.0;
+          break;
+        }
+      }
+      if(uPulsarBeams > 0.5){
+        /* faint lighthouse cones along the magnetic axis: a visual aid (real
+           beams are invisible from the side), drawn at the current time */
+        float ts = jitter * min(1.0, tPlan);
+        vec3 pj = mix(cPrev, c1, ts);
+        vec3 m = pulsarAxis(uTime), v = pj - uPulsar.xyz;
+        float along = dot(v, m), perp = length(v - along * m);
+        float w = 0.04 + 0.07 * abs(along);
+        float glow = exp(-0.5 * perp * perp / (w * w)) * exp(-abs(along) / 6.0) * smoothstep(0.15, 0.6, abs(along))
+                   + 0.6 * exp(-dot(v, v) / 0.06);   // soft glow around the star
+        col += (1.0 - alpha) * vec3(0.45, 0.75, 1.0) * glow * 0.5 * length(seg) * min(1.0, tPlan);
+      }
+    }
     if(uJetOn > 0.5){
       float span = min(1.0, tPlan), ts = jitter * span;
       col += (1.0 - alpha) * jetEmission(mix(cPrev, c1, ts), mix(X0, X, ts), dirOut, b, camE,
@@ -595,14 +800,7 @@ void main(){
     float fade = escaped ? 1.0 : smoothstep(2.0, 6.0, X.x);
     col += (1.0 - alpha) * sky(dirOut) * fade;
   }
-  if(uObsBeam > 0.5 && D != 1.0){
-    /* bolometric intensity ∝ D⁴, auto-exposed so the brightest direction
-       does not saturate; hue pushed blue ahead, red behind */
-    col *= min(D * D * D * D, 1e4) * uObsExpo;
-    col *= D > 1.0 ? mix(vec3(1.0), vec3(0.72, 0.88, 1.3), clamp((D - 1.0) * 0.8, 0.0, 1.0))
-                   : mix(vec3(1.0), vec3(1.25, 0.55, 0.3), clamp((1.0 - D) * 1.6, 0.0, 1.0));
-  }
-  fragColor = vec4(col, 1.0);
+  fragColor = vec4(observerBeam(col, D), 1.0);
 }`;
 
 /* ------------------------------------------------------------------ */

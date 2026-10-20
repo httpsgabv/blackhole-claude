@@ -149,6 +149,59 @@ Real black holes spin, and spin changes almost everything near the hole. The hor
 
 <sub>The probe, inspector and observer images below use a/M = 0, so their numbers match the Schwarzschild formulas.</sub>
 
+### Merge two black holes &nbsp;<sub><code>B</code></sub>
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/media/binary-inspiral.jpg" alt="Two black holes orbiting, each lensing the stars" width="100%"></td>
+    <td width="50%"><img src="docs/media/binary-merged.jpg" alt="After the merger: gravitational-wave crests spiralling out from the remnant" width="100%"></td>
+  </tr>
+  <tr>
+    <td><sub><code>INSPIRAL</code> &nbsp;TWO SHADOWS · TWO SETS OF LENSED STARS</sub></td>
+    <td><sub><code>RINGDOWN</code> &nbsp;THE LAST WAVE CRESTS SPIRAL OUTWARD</sub></td>
+  </tr>
+</table>
+
+<p align="center">
+  <img src="docs/media/binary.gif" alt="Binary black hole inspiral and merger with spiralling gravitational waves" width="100%">
+</p>
+
+Two holes on a quasi-circular orbit lose energy to gravitational waves. The orbit shrinks by the Peters formula, $\dot a = -\tfrac{64}{5}\,\mu M^2/a^3$, solved in closed form so time can be scrubbed both ways (and sped up, since the real decay is very slow). The frequency climbs into a **chirp**: the readouts show the separation, the GW frequency in hertz for the chosen mass, the time to merger and the chirp mass. **Chirp audio** plays the rising tone. The holes merge into one remnant that has lost about 5% of its mass. The cyan crests trace the wave field $h \propto (a\Omega)^2/r\,\cos 2(\psi - \Omega r - \phi)$ spreading at light speed, and its gradient can nudge background light (exaggerated). The lensing adds up each hole's own exact bending law. That is an approximation: the two-body spacetime is not a sum of two one-body spacetimes.
+
+### Go through a wormhole &nbsp;<sub><code>W</code></sub>
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/media/wormhole-home.jpg" alt="Wormhole seen from our universe: a sphere showing another universe's sky" width="100%"></td>
+    <td width="50%"><img src="docs/media/wormhole-far.jpg" alt="From the far side: our own starfield through the throat" width="100%"></td>
+  </tr>
+  <tr>
+    <td><sub><code>HOME</code> &nbsp;THE OTHER UNIVERSE, THROUGH THE THROAT</sub></td>
+    <td><sub><code>FAR SIDE</code> &nbsp;LOOKING BACK HOME</sub></td>
+  </tr>
+</table>
+
+<p align="center">
+  <img src="docs/media/wormhole.gif" alt="Camera travelling through the wormhole throat into the other universe" width="100%">
+</p>
+
+An Ellis wormhole, $ds^2 = -dt^2 + d\ell^2 + (b_0^2 + \ell^2)\,d\Omega^2$, joins two flat universes at a throat of radius $b_0$. Light moves in a plane with $\ell'' = h^2\ell/(b_0^2 + \ell^2)^2$. Rays that come out at $\ell < 0$ show the second universe's sky: a different starfield with violet and teal nebulae. Only the ray equation and the sky lookup change, so it costs less than the black hole. **Travel through** moves the camera across the throat into the other universe. It is exact for this geometry; holding such a throat open would need negative-energy matter.
+
+### Time a pulsar &nbsp;<sub><code>U</code></sub>
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/media/pulsar-front.jpg" alt="Pulsar in front of the hole with its two beams" width="100%"></td>
+    <td width="50%"><img src="docs/media/pulsar-behind.jpg" alt="Pulsar behind the hole: its beams lensed around the shadow" width="100%"></td>
+  </tr>
+  <tr>
+    <td><sub><code>IN FRONT</code> &nbsp;SHAPIRO DELAY ≈ 1.1 rₛ/c</sub></td>
+    <td><sub><code>BEHIND</code> &nbsp;SHAPIRO DELAY ≈ 7.3 rₛ/c · BEAMS LENSED</sub></td>
+  </tr>
+</table>
+
+A neutron star orbits the hole, sweeping two beams along a magnetic axis tilted from its spin. The star's brightness on screen is the beam strength along the **actual bent path** its light took, at the moment that light left. Pulses therefore arrive late and bent. Their spacing changes with orbital Doppler shift and gravitational redshift (the **pulse period** readout), and they are delayed most when the pulsar passes behind the hole. The **Shapiro delay** readout, $\Delta t = 2M\ln\frac{r_1 + r_2 + d}{r_1 + r_2 - d}$, is the effect used in some of the most precise tests of general relativity. The glowing cones are drawn as a guide only.
+
 ### Flash the disk &nbsp;<sub><code>X</code></sub>
 
 <p align="center">
@@ -335,6 +388,8 @@ Every astrophysical hole is far colder than the 2.7 K microwave background. The 
 | | | | `T` | ray inspector |
 | | | | `X` | flash (flare + echoes) |
 | | | | `J` | jets on / off |
+| | | | `B` · `W` | binary · wormhole scene |
+| | | | `U` | pulsar on / off |
 | | | | `O` | cycle observer mode |
 | | | | `P` | PNG snapshot |
 | | | | `R` | record / stop |
@@ -346,6 +401,10 @@ Every astrophysical hole is far colder than the 2.7 K microwave background. The 
 
 | Section | Parameter | Range | Notes |
 |:--|:--|:--|:--|
+| Scene | Object | Black hole · Binary · Wormhole | Disk, jets, probe, pulsar and inspector are black-hole only |
+| | Mass ratio, start separation, speed-up | 0.2 – 1, 2 – 14 rₛ, ×1 – ×100 | Binary inspiral |
+| | Wave pattern, wave lensing, chirp audio | | Binary only |
+| | Throat radius, travel through | 0.2 – 3 rₛ | Wormhole only |
 | Simulation | Time rate | −4× … 4× | Negative runs time backwards |
 | | Mass scale | 10¹² kg · Earth · 10 M☉ · Sgr A* · 10⁸ M☉ · M87* | Physical units and Hawking temperature; the geometry is scale-free |
 | | Probe orbit | 2 – 18 rₛ, 0 – 80° | Circular geodesic, lensed like everything else |
@@ -365,6 +424,8 @@ Every astrophysical hole is far colder than the 2.7 K microwave background. The 
 | Jets | On / off, power | 0 – 4 | Scaled by spin² (off at a/M 0) |
 | | Lorentz factor γ | 1.05 – 10 | Sets β and the strength of beaming |
 | | Opening, length | 0 – 17°, 8 – 80 rₛ | |
+| Pulsar | On / off, orbit radius, inclination | 2 – 18 rₛ, 0 – 80° | |
+| | Spin period, magnetic tilt, beams | 0.5 – 10 rₛ/c, 10 – 90° | |
 | Camera | Observer | Static · Orbit · Free fall · Boost | Aberration and Doppler from the camera's own motion |
 | | Boost speed | 0 – 0.95c | Boost mode only |
 | | Follow trajectory, observer beaming | on / off | Orbit and fall move with simulation time |
@@ -396,6 +457,8 @@ EventHorizon.camera.dist = 6;         // eased; call snapCamera() to jump
 EventHorizon.time = 0;
 EventHorizon.releaseProbe();          // resetProbe() to recall it
 EventHorizon.flash();                 // flare behind the hole; watch for the echoes
+EventHorizon.scene('binary');         // 'kerr' · 'binary' · 'wormhole'
+EventHorizon.travelThrough();         // wormhole: cross the throat
 EventHorizon.inspect(640, 300);       // trace the ray at CSS pixel (x, y)
 EventHorizon.set({ observer: 'boost', obsBeta: 0.9 });
 EventHorizon.set({ spinA: 0.998 });     // Kerr spin a/M
@@ -410,8 +473,8 @@ EventHorizon.snapshot();
 ```
 index.html        HUD markup, field notes
 css/style.css     interface
-js/shaders.js     Kerr geodesic tracer, thin and volumetric disk, jets, sky, bloom, tone mapping (GLSL ES 3.0)
-js/main.js        render graph, Kerr helpers, camera, observer modes, probe, ray inspector, UI, export
+js/shaders.js     Kerr, binary and wormhole tracers, disk, jets, pulsar, skies, bloom, tone mapping (GLSL ES 3.0)
+js/main.js        render graph, Kerr helpers, scenes (binary, wormhole, pulsar), camera, observers, probe, inspector, UI, export
 docs/             README media
 ```
 

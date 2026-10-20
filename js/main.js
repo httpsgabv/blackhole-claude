@@ -47,6 +47,8 @@ const P = {
   scale: 0.75, quality: 'med', bloom: 1.3, exposure: 1.05, vignette: 0.6, grain: true,
   flareMode: 'spot', flareR: 4, flareBright: 6,
   jetOn: true, jetPower: 1, jetGamma: 2, jetW0: 0.35, jetOpen: 0.08, jetLen: 45,
+  scene: 'kerr', wormB0: 1, binQ: 1, binA0: 8, binSpeed: 10, gwShow: true, gwLens: 1, chirpAudio: false,
+  pulsarOn: false, pulsarR: 7, pulsarInc: 12, pulsarPeriod: 2.5, pulsarTilt: 62, pulsarBeams: true,
   recRes: 'viewport', recDur: 10, recFps: 60,
 };
 
@@ -237,7 +239,7 @@ function kerrOrbit(r, s, a){
     clock: rad > 0 ? Math.pow(r, 0.75) * Math.sqrt(rad) / den : 0,
   };
 }
-const distMin = () => kerrRPlus(spinA()) + 0.3;
+const distMin = () => P.scene === 'wormhole' ? 0.02 : P.scene === 'binary' ? 2.5 : kerrRPlus(spinA()) + 0.3;
 /* keep the disk's inner edge on the ISCO when it is locked there */
 function syncDiskEdge(){
   if(!P.diskIsco) return;
@@ -418,6 +420,10 @@ function toCamera(s, v){
 /* Velocities are measured by the local zero-angular-momentum observer (ZAMO),
    the frame the shader traces in. With a = 0 it is the ordinary static observer. */
 function observerState(){
+  if(P.scene !== 'kerr'){
+    if(P.observer === 'boost'){ const m = cameraBasis().m, b = P.obsBeta; return { v: [m[6] * b, m[7] * b, m[8] * b], b, clock: Math.sqrt(1 - b * b), note: '' }; }
+    return { v: [0, 0, 0], b: 0, clock: 1, note: P.observer === 'static' ? '' : 'N/A' };
+  }
   const r = cam.dist, pos = camPosOf(cam), rh = scl(pos, 1 / r);
   const a = spinA(), bl = cartToBL(pos, a), Z = zamo(bl[0], bl[1], a);
   if(P.observer === 'orbit'){
@@ -475,10 +481,121 @@ function moveObserver(dSim){
 }
 
 /* ================================================================== */
+/* Scenes: binary black hole, wormhole; and the pulsar                 */
+/* ================================================================== */
+
+/* ---- binary: quasi-circular inspiral driven by gravitational waves.
+   Peters (1964): da/dt = −(64/5) μ M² / a³ (G = c = 1, total M = 0.5), sped
+   up by binSpeed so a merger fits in a minute. Solved in closed form, so
+   the state is a function of time and can be scrubbed backwards:
+     a(t) = (a₀⁴ − 4Kt)^{1/4},  ψ(t) = √M (a₀^{5/2} − a^{5/2}) / (2.5 K) */
+const bin = { t0: 0 };
+const A_MERGE = 1.0;                       // sum of the two Schwarzschild radii
+const RINGDOWN_OMEGA = 0.56;               // half the remnant's ringdown frequency (≈ 0.53/M_f)
+function binaryState(){
+  const q = P.binQ, M = KM;
+  const m1 = M / (1 + q), m2 = M * q / (1 + q), mu = m1 * m2 / M;
+  const K = 12.8 * mu * M * M * P.binSpeed;
+  const a0 = Math.max(P.binA0, A_MERGE + 0.05);
+  const t = simTime - bin.t0;
+  const tMerge = (a0 ** 4 - A_MERGE ** 4) / (4 * K);
+  const psiOf = a => Math.sqrt(M) * (a0 ** 2.5 - a ** 2.5) / (2.5 * K);
+  let a, psi, Om, merged = false, since = -1e9;
+  if(t < 0){ a = a0; Om = Math.sqrt(M / a0 ** 3); psi = Om * t; }
+  else if(t < tMerge){ a = (a0 ** 4 - 4 * K * t) ** 0.25; Om = Math.sqrt(M / a ** 3); psi = psiOf(a); }
+  else { merged = true; since = t - tMerge; a = A_MERGE; Om = RINGDOWN_OMEGA; psi = psiOf(A_MERGE) + RINGDOWN_OMEGA * since; }
+  const c = Math.cos(psi), s = Math.sin(psi);
+  const x1 = [-(m2 / M) * a * c, 0, -(m2 / M) * a * s], x2 = [(m1 / M) * a * c, 0, (m1 / M) * a * s];
+  return { q, m1, m2, mu, K, a, psi, Om, merged, since, t, tMerge, x1, x2 };
+}
+function restartBinary(){ bin.t0 = simTime; if(!P.playing) P.playing = true; syncUI(); }
+
+/* ---- wormhole: the camera sits at signed proper distance L = side · dist */
+const worm = { side: 1, travel: null };
+function travelThrough(){
+  if(P.scene !== 'wormhole') setScene('wormhole');
+  const L = worm.side * Math.max(cam.dist, 2);
+  worm.travel = { start: performance.now(), from: L, to: -L, dur: 6000 };
+}
+function stepWormTravel(){
+  const tr = worm.travel;
+  if(!tr) return;
+  const u = Math.min(1, (performance.now() - tr.start) / tr.dur);
+  const e = u * u * (3 - 2 * u);
+  const L = tr.from + (tr.to - tr.from) * e;
+  if(Math.abs(L) > 1e-4) worm.side = Math.sign(L);
+  cam.dist = goal.dist = Math.max(Math.abs(L), 0.02);
+  if(u >= 1){ worm.side = Math.sign(tr.to) || worm.side; worm.travel = null; }
+}
+
+/* ---- pulsar: circular orbit like the probe, spinning lighthouse beams */
+function pulsarState(){
+  const a = spinA(), R = P.pulsarR, inc = P.pulsarInc * Math.PI / 180;
+  const o = kerrOrbit(R, P.spin, a);
+  const ph = o.Om * simTime + 0.4;
+  const toWorld = (x, z) => [x, z * Math.sin(inc), z * Math.cos(inc)];
+  const c = Math.cos(ph), s = Math.sin(ph);
+  const p = toWorld(R * c, R * s), v = scl(toWorld(-s, c), o.v * P.spin);
+  // Shapiro delay for light from the pulsar to the camera: Δt = 2M ln[(r₁ + r₂ + d)/(r₁ + r₂ − d)]
+  const B = cameraBasis(), rc = Math.hypot(...B.pos), rp = Math.hypot(...p), d = Math.hypot(...sub(B.pos, p));
+  const shapiro = Math.log((rp + rc + d) / Math.max(rp + rc - d, 1e-6));
+  // observed spin period: Doppler (straight-line direction) × gravitational shift
+  const n = norm(sub(B.pos, p)), beta = Math.min(o.v, 0.995);
+  const dop = 1 / ((1 / Math.sqrt(1 - beta * beta)) * (1 - dot3(v, n)));
+  const bp = cartToBL(p, a), bc = cartToBL(B.pos, a);
+  const g = dop * (P.redshift ? zamo(bp[0], bp[1], a).alpha / Math.max(zamo(bc[0], bc[1], a).alpha, 1e-3) : 1);
+  return { p, shapiro, roemer: d - rc, g, period: P.pulsarPeriod / g, behind: dot3(p, B.pos) < 0 };
+}
+
+/* ---- chirp audio: the gravitational-wave frequency, shifted into hearing range */
+const audio = { ctx: null, osc: null, gain: null };
+function ensureAudio(){
+  if(audio.ctx) return;
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if(!AC) return;
+  audio.ctx = new AC();
+  audio.osc = audio.ctx.createOscillator();
+  audio.gain = audio.ctx.createGain();
+  audio.osc.type = 'sine';
+  audio.gain.gain.value = 0;
+  audio.osc.connect(audio.gain).connect(audio.ctx.destination);
+  audio.osc.start();
+}
+function updateAudio(st){
+  if(!audio.ctx) return;
+  const now = audio.ctx.currentTime;
+  const live = P.chirpAudio && P.scene === 'binary' && P.playing && P.speed !== 0 && st;
+  let f = 40, amp = 0;
+  if(live){
+    if(!st.merged){ f = Math.max(32, st.Om / Math.PI * 2400); amp = 0.06 + 0.24 * Math.min(1, 1 / st.a); }
+    else { f = RINGDOWN_OMEGA / Math.PI * 2400; amp = 0.3 * Math.exp(-st.since / 1.5); }
+  }
+  audio.osc.frequency.setTargetAtTime(f, now, 0.03);
+  audio.gain.gain.setTargetAtTime(amp * 0.5, now, 0.05);
+}
+
+const SCENE_VIEWS = {
+  kerr:     null,
+  binary:   { dist: 24, yaw: 0.3, pitch: 0.42, roll: 0, shiftX: 0, shiftY: 0, fov: 55 },
+  wormhole: { dist: 6,  yaw: 0.0, pitch: 0.08, roll: 0, shiftX: 0, shiftY: 0, fov: 70 },
+};
+function setScene(name){
+  P.scene = name;
+  if(name !== 'kerr' && insp.mode) setInspectMode(false);
+  if(name === 'binary') restartBinary();
+  if(name === 'wormhole'){ worm.side = 1; worm.travel = null; }
+  const v = SCENE_VIEWS[name] || PRESETS.gargantua;
+  Object.assign(goal, v);
+  P.fov = v.fov; P.roll = v.roll;
+  clampGoal();
+  syncUI();
+}
+
+/* ================================================================== */
 /* Render                                                              */
 /* ================================================================== */
 const SKY = { stars: 0, grid: 1, void: 2 };
-let lastBasis = null, lastPlanet = null;
+let lastBasis = null, lastPlanet = null, lastBinary = null, lastPulsar = null;
 
 function render(){
   const W = canvas.width, H = canvas.height;
@@ -531,6 +648,26 @@ function render(){
   u1f(pr, 'uJetOpen', P.jetOpen);
   u1f(pr, 'uJetLen', P.jetLen);
   u1f(pr, 'uJetBase', kerrRPlus(spinA()) + 0.25);
+  u1i(pr, 'uScene', { kerr: 0, binary: 1, wormhole: 2 }[P.scene]);
+  u1f(pr, 'uWormB0', P.wormB0);
+  u1f(pr, 'uWormL', worm.side * cam.dist);
+  const bs = lastBinary = P.scene === 'binary' ? binaryState() : null;
+  if(bs){
+    const rsF = 2 * KM * 0.95;                 // remnant: ~5% of the mass leaves as gravitational waves
+    if(bs.merged){ u4f(pr, 'uBH1', [0, 0, 0, rsF]); u4f(pr, 'uBH2', [0, 0, 0, 0]); }
+    else { u4f(pr, 'uBH1', [...bs.x1, 2 * bs.m1]); u4f(pr, 'uBH2', [...bs.x2, 2 * bs.m2]); }
+    // after the merger the last wave crest keeps travelling outward, then the field fades
+    u4f(pr, 'uGW', [bs.psi, bs.Om, Math.max(bs.a, 1), 0.9 * (bs.merged ? Math.exp(-bs.since / 6) : 1)]);
+    u1f(pr, 'uGwShow', P.gwShow ? 1 : 0);
+    u1f(pr, 'uGwLens', P.gwLens * 4);
+  }
+  const ps = lastPulsar = P.pulsarOn && P.scene === 'kerr' ? pulsarState() : null;
+  u1f(pr, 'uPulsarOn', ps ? 1 : 0);
+  if(ps){
+    u4f(pr, 'uPulsar', [...ps.p, 0.14]);
+    u4f(pr, 'uPulsarSpin', [2 * Math.PI / P.pulsarPeriod, P.pulsarTilt * Math.PI / 180, 0, 0.2]);
+    u1f(pr, 'uPulsarBeams', P.pulsarBeams ? 1 : 0);
+  }
   u1f(pr, 'uEscape', Math.max(rCam * 1.05 + 2, P.diskOut * 1.4, 28));
   u1f(pr, 'uStepK', q.k);
   u1i(pr, 'uMaxSteps', q.steps);
@@ -609,6 +746,20 @@ function render(){
 const ctrls = {};
 const pct = v => Math.round(v * 100) + '%';
 const SECTIONS = [
+  { id: 'scene', title: 'Scene', items: [
+    { t: 'seg', k: 'scene', label: 'Object', opts: [['kerr', 'BLACK HOLE'], ['binary', 'BINARY'], ['wormhole', 'WORMHOLE']],
+      hint: 'Disk, jets, probe, pulsar and the ray inspector belong to the black-hole scene.' },
+    { t: 'range', k: 'binQ', label: 'Mass ratio q', min: 0.2, max: 1, step: 0.01, fmt: v => v.toFixed(2), dep: () => P.scene === 'binary' },
+    { t: 'range', k: 'binA0', label: 'Start separation', min: 2, max: 14, step: 0.1, fmt: v => v.toFixed(1) + ' rₛ', dep: () => P.scene === 'binary' },
+    { t: 'range', k: 'binSpeed', label: 'Inspiral speed-up', min: 1, max: 100, step: 1, fmt: v => '×' + v, dep: () => P.scene === 'binary',
+      hint: 'Gravitational waves really take far longer to shrink the orbit; this speeds that up.' },
+    { t: 'buttons', items: [['Restart inspiral', () => restartBinary(), 'wide']] },
+    { t: 'toggle', k: 'gwShow', label: 'Show wave pattern', dep: () => P.scene === 'binary' },
+    { t: 'range', k: 'gwLens', label: 'Wave lensing (exaggerated)', min: 0, max: 3, step: 0.01, fmt: v => v.toFixed(2), dep: () => P.scene === 'binary' },
+    { t: 'toggle', k: 'chirpAudio', label: 'Chirp audio', dep: () => P.scene === 'binary' },
+    { t: 'range', k: 'wormB0', label: 'Throat radius', min: 0.2, max: 3, step: 0.01, fmt: v => v.toFixed(2) + ' rₛ', dep: () => P.scene === 'wormhole' },
+    { t: 'buttons', items: [['Travel through the wormhole', () => travelThrough(), 'wide']] },
+  ]},
   { id: 'sim', title: 'Simulation', items: [
     { t: 'range', k: 'speed', label: 'Time rate', min: -4, max: 4, step: 0.05, fmt: v => '×' + v.toFixed(2),
       hint: 'Negative values run the clock backwards.' },
@@ -668,6 +819,15 @@ const SECTIONS = [
       hint: 'Bulk speed of the plasma. Faster jets beam more strongly: the jet coming toward you brightens and the one going away fades.' },
     { t: 'range', k: 'jetOpen', label: 'Opening', min: 0, max: 0.3, step: 0.005, fmt: v => (Math.atan(v) * 180 / Math.PI).toFixed(1) + '°', dep: 'jetOn' },
     { t: 'range', k: 'jetLen', label: 'Length', min: 8, max: 80, step: 1, fmt: v => v + ' rₛ', dep: 'jetOn' },
+  ]},
+  { id: 'pulsar', title: 'Pulsar', collapsed: true, items: [
+    { t: 'toggle', k: 'pulsarOn', label: 'Orbiting pulsar' },
+    { t: 'note', text: 'A spinning neutron star sweeps two radio beams like a lighthouse. Its pulses arrive late, bent and Doppler-shifted as it orbits; the extra delay when it passes behind the hole (Shapiro delay) is a classic test of general relativity.' },
+    { t: 'range', k: 'pulsarR', label: 'Orbit radius', min: 2, max: 18, step: 0.1, fmt: v => v.toFixed(1) + ' rₛ', dep: 'pulsarOn' },
+    { t: 'range', k: 'pulsarInc', label: 'Orbit inclination', min: 0, max: 80, step: 1, fmt: v => v + '°', dep: 'pulsarOn' },
+    { t: 'range', k: 'pulsarPeriod', label: 'Spin period', min: 0.5, max: 10, step: 0.1, fmt: v => v.toFixed(1) + ' rₛ/c', dep: 'pulsarOn' },
+    { t: 'range', k: 'pulsarTilt', label: 'Magnetic tilt', min: 10, max: 90, step: 1, fmt: v => v + '°', dep: 'pulsarOn' },
+    { t: 'toggle', k: 'pulsarBeams', label: 'Show beams', dep: 'pulsarOn' },
   ]},
   { id: 'cam', title: 'Camera', items: [
     { t: 'buttons', items: [['Gargantua', () => applyPreset('gargantua')], ['Edge-on', () => applyPreset('edge')],
@@ -793,6 +953,9 @@ function syncUI(){
 }
 
 function onParam(k){
+  if(k === 'scene'){ setScene(P.scene); return; }
+  if(k === 'chirpAudio' && P.chirpAudio){ ensureAudio(); if(audio.ctx && audio.ctx.state === 'suspended') audio.ctx.resume(); }
+  if(k === 'binQ' || k === 'binA0' || k === 'binSpeed') restartBinary();
   if(k === 'spinA' || k === 'spin' || k === 'diskIsco') syncDiskEdge();
   if(k === 'spinA') clampGoal();
   if(k === 'observer') obs.dir = null;
@@ -815,15 +978,34 @@ const DEFAULTS = Object.assign({}, P);
 const TELE = [
   ['R_CAM', 'rcam'], ['DISTANCE', 'rphys'], ['INCLINATION', 'incl'], ['OBSERVER', 'obs'], ['CLOCK RATE', 'clock'],
   ['ESCAPE V', 'vesc'], ['PROBE', 'pstate'], ['PROBE R', 'pr'], ['PROBE τ/t', 'probe'], ['PROBE τ', 'ptau'],
-  ['REDSHIFT g', 'pg'], ['TIDAL · 2 m', 'tidal'], ['R_S', 'rs'], ['SPIN · r₊', 'spin'], ['FLARE', 'flare'], ['FRAME DRAG', 'drag'], ['HAWKING T', 'hawk'], ['EVAPORATION', 'evap'], ['FRAME', 'fps'],
+  ['REDSHIFT g', 'pg'], ['TIDAL · 2 m', 'tidal'], ['R_S', 'rs'], ['SPIN · r₊', 'spin'], ['FLARE', 'flare'], ['FRAME DRAG', 'drag'],
+  ['PULSAR', 'psr'], ['SHAPIRO DELAY', 'shap'], ['PULSE PERIOD', 'pper'],
+  ['SEPARATION', 'bsep'], ['GW FREQUENCY', 'bfreq'], ['MERGER IN', 'bmerge'], ['CHIRP MASS', 'bchirp'],
+  ['THROAT', 'wthroat'], ['UNIVERSE', 'wside'],
+  ['HAWKING T', 'hawk'], ['EVAPORATION', 'evap'], ['FRAME', 'fps'],
 ];
-const teleEls = {};
+const teleEls = {}, teleDts = {};
+/* rows that only mean something in one scene (or with the pulsar on) */
+const TELE_ONLY = {
+  kerr: ['vesc', 'pstate', 'pr', 'probe', 'ptau', 'pg', 'tidal', 'spin', 'flare', 'drag', 'hawk', 'evap'],
+  pulsar: ['psr', 'shap', 'pper'],
+  binary: ['bsep', 'bfreq', 'bmerge', 'bchirp'],
+  wormhole: ['wthroat', 'wside'],
+};
+function teleVisibility(){
+  const show = {};
+  for(const id of TELE_ONLY.kerr) show[id] = P.scene === 'kerr';
+  for(const id of TELE_ONLY.pulsar) show[id] = P.scene === 'kerr' && P.pulsarOn;
+  for(const id of TELE_ONLY.binary) show[id] = P.scene === 'binary';
+  for(const id of TELE_ONLY.wormhole) show[id] = P.scene === 'wormhole';
+  for(const id in show){ teleEls[id].style.display = teleDts[id].style.display = show[id] ? '' : 'none'; }
+}
 (function(){
   const dl = $('#telemetry');
   TELE.forEach(([label, id]) => {
     const dt = document.createElement('dt'); dt.textContent = label;
     const dd = document.createElement('dd'); dd.textContent = '—';
-    dl.append(dt, dd); teleEls[id] = dd;
+    dl.append(dt, dd); teleEls[id] = dd; teleDts[id] = dt;
   });
 })();
 
@@ -931,6 +1113,26 @@ function updateTelemetry(dt){
   setTele('hawk', fmtSci(TH) + ' K' + (TH < 2.725 ? ' · < CMB' : ''), TH > 1e6);
   setTele('evap', tEvap < 1 ? fmtDur(tEvap * 3.15576e7) : fmtSci(tEvap) + ' yr' + (tEvap < 1.38e10 ? ' · < AGE OF UNIVERSE' : ''), tEvap < 1.38e10);
   teleEls.fps.textContent = Math.round(fpsAvg) + ' FPS · ' + Math.round(canvas.width * P.scale) + '×' + Math.round(canvas.height * P.scale);
+  teleVisibility();
+  if(lastPulsar){
+    const ps = lastPulsar;
+    setTele('psr', ps.behind ? 'BEHIND HOLE' : 'IN FRONT', ps.behind);
+    setTele('shap', `${ps.shapiro.toFixed(3)} rₛ/c`, ps.behind);
+    setTele('pper', `${ps.period.toFixed(3)} rₛ/c (×${(1 / ps.g).toFixed(3)})`);
+  }
+  if(P.scene === 'binary' && lastBinary){
+    const b = lastBinary;
+    setTele('bsep', b.merged ? 'MERGED · RINGDOWN' : `${b.a.toFixed(2)} rₛ`, b.merged);
+    // GW frequency is twice the orbital frequency: f = Ω/π per r_s/c
+    setTele('bfreq', `${fmtSci(b.Om / Math.PI / tUnit)} Hz`);
+    setTele('bmerge', b.merged ? `${b.since.toFixed(1)} rₛ/c AGO` : `${(b.tMerge - b.t).toFixed(1)} rₛ/c · REAL ${fmtDur((b.tMerge - b.t) * P.binSpeed * tUnit)}`, !b.merged && b.tMerge - b.t < 20);
+    // chirp mass 𝓜 = μ^{3/5} M^{2/5} = M (q / (1+q)²)^{3/5}
+    setTele('bchirp', `${fmtSci(m * Math.pow(b.q / ((1 + b.q) * (1 + b.q)), 0.6))} M☉`);
+  }
+  if(P.scene === 'wormhole'){
+    setTele('wthroat', `${P.wormB0.toFixed(2)} rₛ · ${fmtLen(P.wormB0 * rsKm)}`);
+    setTele('wside', worm.travel ? 'IN TRANSIT' : worm.side > 0 ? 'HOME (A)' : 'FAR SIDE (B)', worm.side < 0);
+  }
 }
 
 /* ================================================================== */
@@ -1036,6 +1238,9 @@ addEventListener('keydown', e => {
     case 'g': P.guides = !P.guides; syncUI(); break;
     case 'x': triggerFlash(); break;
     case 'j': P.jetOn = !P.jetOn; syncUI(); break;
+    case 'b': setScene(P.scene === 'binary' ? 'kerr' : 'binary'); break;
+    case 'w': setScene(P.scene === 'wormhole' ? 'kerr' : 'wormhole'); break;
+    case 'u': P.pulsarOn = !P.pulsarOn; syncUI(); break;
     case 'd': toggleProbe(); break;
     case 't': setInspectMode(!insp.mode); break;
     case 'o': { const m = ['static', 'orbit', 'fall', 'boost']; P.observer = m[(m.indexOf(P.observer) + 1) % m.length]; onParam('observer'); break; }
@@ -1384,6 +1589,7 @@ function updateInspectorPanel(R){
 }
 
 function inspectAt(px, py){
+  if(P.scene !== 'kerr'){ toast('THE RAY INSPECTOR WORKS IN THE BLACK-HOLE SCENE'); return; }
   insp.x = px; insp.y = py; insp.has = true;
   insp.res = traceRay(px, py);
   updateInspectorPanel(insp.res);
@@ -1470,6 +1676,7 @@ function frame(now){
   if(flare.on && Math.abs(simTime - flare.t) > 200) flare.on = false;
   simTime += dSim;
   moveObserver(dSim);
+  if(P.scene === 'wormhole') stepWormTravel();
 
   // keyboard camera
   const kr = 1.4 * dt;
@@ -1492,6 +1699,7 @@ function frame(now){
   render();
   if(snapPending){ snapPending = false; doSnapshot(); }
   updateMarkers(dt);
+  updateAudio(lastBinary);
   updateTelemetry(dt);
   tickRecUI();
   requestAnimationFrame(frame);
@@ -1517,6 +1725,8 @@ window.EventHorizon = {
   snapCamera(){ clampGoal(); Object.assign(cam, goal); },
   togglePanel, toggleHUD, snapshot, toggleRecording,
   releaseProbe, resetProbe, flash: () => triggerFlash(),
+  scene: n => setScene(n), restartBinary, travelThrough, binary: () => binaryState(), pulsar: () => pulsarState(),
+  wormhole(L){ worm.travel = null; worm.side = L < 0 ? -1 : 1; cam.dist = goal.dist = Math.max(Math.abs(L), 0.02); },
   kerr: { rPlus: () => kerrRPlus(spinA()), isco: s => kerrIsco(spinA(), s || 1), photonOrbit: s => kerrPhoton(spinA(), s || 1) },
   inspect(x, y){ if(!insp.mode) setInspectMode(true); inspectAt(x, y); return insp.res; },
   closeInspector(){ setInspectMode(false); },
