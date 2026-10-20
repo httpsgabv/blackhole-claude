@@ -46,6 +46,7 @@ const P = {
   observer: 'static', obsBeta: 0.5, obsMove: true, obsBeam: true,
   scale: 0.75, quality: 'med', bloom: 1.3, exposure: 1.05, vignette: 0.6, grain: true,
   flareMode: 'spot', flareR: 4, flareBright: 6,
+  jetOn: true, jetPower: 1, jetGamma: 2, jetW0: 0.35, jetOpen: 0.08, jetLen: 45,
   recRes: 'viewport', recDur: 10, recFps: 60,
 };
 
@@ -520,6 +521,16 @@ function render(){
   u4f(pr, 'uFlare', [flare.t, flare.r, flare.phi, flare.mode]);
   u1f(pr, 'uFlareOn', flare.on ? 1 : 0);
   u1f(pr, 'uFlareBright', P.flareBright);
+  // Blandford-Znajek: jet power ∝ a² (normalised to the default spin, 0.6)
+  const jetBeta = Math.sqrt(1 - 1 / (P.jetGamma * P.jetGamma));
+  u1f(pr, 'uJetOn', P.jetOn && P.spinA > 0.01 ? 1 : 0);
+  u1f(pr, 'uJetPower', 30 * P.jetPower * (P.spinA / 0.6) ** 2);
+  u1f(pr, 'uJetBeta', jetBeta);
+  u1f(pr, 'uJetGamma', P.jetGamma);
+  u1f(pr, 'uJetW0', P.jetW0);
+  u1f(pr, 'uJetOpen', P.jetOpen);
+  u1f(pr, 'uJetLen', P.jetLen);
+  u1f(pr, 'uJetBase', kerrRPlus(spinA()) + 0.25);
   u1f(pr, 'uEscape', Math.max(rCam * 1.05 + 2, P.diskOut * 1.4, 28));
   u1f(pr, 'uStepK', q.k);
   u1i(pr, 'uMaxSteps', q.steps);
@@ -648,6 +659,16 @@ const SECTIONS = [
     { t: 'seg', k: 'spin', label: 'Disk rotation', opts: [[1, 'PROGRADE'], [-1, 'RETROGRADE']], dep: 'diskOn',
       hint: 'Relative to the hole\'s spin. Retrograde orbits must stay farther out.' },
   ]},
+  { id: 'jet', title: 'Jets', items: [
+    { t: 'toggle', k: 'jetOn', label: 'Relativistic jets' },
+    { t: 'note', id: 'jetNote' },
+    { t: 'range', k: 'jetPower', label: 'Jet power', min: 0, max: 4, step: 0.01, fmt: v => v.toFixed(2), dep: 'jetOn' },
+    { t: 'range', k: 'jetGamma', label: 'Lorentz factor γ', min: 1.05, max: 10, step: 0.05,
+      fmt: v => v.toFixed(2) + ' · β ' + Math.sqrt(1 - 1 / (v * v)).toFixed(3), dep: 'jetOn',
+      hint: 'Bulk speed of the plasma. Faster jets beam more strongly: the jet coming toward you brightens and the one going away fades.' },
+    { t: 'range', k: 'jetOpen', label: 'Opening', min: 0, max: 0.3, step: 0.005, fmt: v => (Math.atan(v) * 180 / Math.PI).toFixed(1) + '°', dep: 'jetOn' },
+    { t: 'range', k: 'jetLen', label: 'Length', min: 8, max: 80, step: 1, fmt: v => v + ' rₛ', dep: 'jetOn' },
+  ]},
   { id: 'cam', title: 'Camera', items: [
     { t: 'buttons', items: [['Gargantua', () => applyPreset('gargantua')], ['Edge-on', () => applyPreset('edge')],
                             ['Polar', () => applyPreset('top')], ['Close pass', () => applyPreset('close')],
@@ -758,6 +779,10 @@ function syncUI(){
     `<div><i style="background:var(--cyan)"></i>${spinned ? 'PHOTON ORBITS · ' + phP.toFixed(2) + ' / ' + phR.toFixed(2) : 'PHOTON SPHERE · 1.50'} r<sub>s</sub></div>` +
     `<div><i style="background:var(--accent)"></i>ISCO · ${kerrIsco(aS, P.spin).toFixed(2)} r<sub>s</sub></div>` +
     `<div><i style="background:rgba(200,215,230,.5)"></i>GRID · 1 r<sub>s</sub> / 30°</div>`;
+  const jn = $('#jetNote');
+  if(jn) jn.textContent = P.spinA > 0.01
+    ? `Powered by the hole's spin (Blandford–Znajek, P ∝ a²): ${((P.spinA / 0.6) ** 2).toFixed(2)}× the power at a/M 0.6.`
+    : 'No spin, no jet: at a/M 0 there is no rotational energy to tap, so the jets switch off.';
   const sn = $('#spinNote');
   if(sn) sn.textContent = `Horizon r₊ ${kerrRPlus(aS).toFixed(3)} · ISCO ${kerrIsco(aS, 1).toFixed(2)} pro / ${kerrIsco(aS, -1).toFixed(2)} retro · photon orbits ${phP.toFixed(2)} / ${phR.toFixed(2)} · ergosphere 1.00 at the equator (all rₛ)`;
   const drop = document.querySelector('.btn.drop');
@@ -1010,6 +1035,7 @@ addEventListener('keydown', e => {
     case '5': applyPreset('eht'); break;
     case 'g': P.guides = !P.guides; syncUI(); break;
     case 'x': triggerFlash(); break;
+    case 'j': P.jetOn = !P.jetOn; syncUI(); break;
     case 'd': toggleProbe(); break;
     case 't': setInspectMode(!insp.mode); break;
     case 'o': { const m = ['static', 'orbit', 'fall', 'boost']; P.observer = m[(m.indexOf(P.observer) + 1) % m.length]; onParam('observer'); break; }

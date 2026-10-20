@@ -107,6 +107,25 @@ Then open **http://localhost:5179**. Opening `index.html` directly also works. A
 
 The thick model replaces the sheet with a volume of hot gas. Its density falls off as a Gaussian above and below the plane, with scale height H = (H/R)·R, plus an optional broader **haze**. Each ray integrates emission and absorption step by step through the Kerr metric. The gas is mostly optically thin, so it glows more than it blocks, and the shadow becomes a dark depression in the light instead of a hard edge. Gas inside the ISCO keeps glowing as it plunges in, which is why the Event Horizon Telescope images look like a hazy ring. **EHT view** (key 5) looks down at 17°, the angle we see M87* from.
 
+### Launch the jets &nbsp;<sub><code>J</code></sub>
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/media/jets-side.jpg" alt="Twin relativistic jets seen side-on" width="100%"></td>
+    <td width="50%"><img src="docs/media/jets-beaming.jpg" alt="Jets seen at an angle: the approaching jet is bright, the counter-jet dim" width="100%"></td>
+  </tr>
+  <tr>
+    <td><sub><code>SIDE-ON</code> &nbsp;TWIN JETS ALONG THE SPIN AXIS · γ 2</sub></td>
+    <td><sub><code>TILTED 31°</code> &nbsp;APPROACHING JET BEAMED · COUNTER-JET DIMMED</sub></td>
+  </tr>
+</table>
+
+<p align="center">
+  <img src="docs/media/jets.gif" alt="Camera circling the hole while knots stream outward along the jets" width="100%">
+</p>
+
+Jets are optically thin plasma flowing out along the spin axis at Lorentz factor γ (adjustable; β = √(1 − 1/γ²)). The column widens with height and fades out; bright knots ride outward at βc. Every jet sample is ray-traced through the Kerr metric, so the jet behind the hole bends into view. Each sample is weighted by the exact gravitational and frame-dragging shift times the Doppler factor of the flow (I ∝ g³). The approaching jet blazes and the counter-jet nearly vanishes, as in M87. Knots are drawn at their retarded time, which produces apparent superluminal motion on the approaching side. Power follows the hole's spin (Blandford–Znajek, P ∝ a²): at a/M = 0 the jets switch off.
+
 ### Spin the hole &nbsp;<sub><code>SPIN a/M</code></sub>
 
 <table>
@@ -243,6 +262,15 @@ $$I \mathrel{+}= T\,S\,(1 - e^{-\Delta\tau}), \qquad T \mathrel{*}= e^{-k\,\Delt
 where $S$ is the gas's (redshifted) source function and $T$ the transmittance. The gas absorbs less than it emits, which approximates hot, optically thin flow. Steps shrink to $0.4H$ inside the gas, with two jittered samples per step.
 
 </td></tr>
+<tr><td><code>JETS</code></td><td>
+
+Emissivity $j \propto P\,e^{-\rho^2/2w^2}\,(w_0/w)^2$ with $w = w_0 + \tan\vartheta\,|y|$ and moving knots. Each sample is weighted by $g^3$, where
+
+$$g = \frac{1}{\gamma\,(1 - \beta\cos\psi)} \cdot \frac{E_{cam}}{E_{zamo}}, \qquad P \propto a^2$$
+
+and $\psi$ is the angle between the flow and the photon. The jets are optically thin and add light without blocking it.
+
+</td></tr>
 <tr><td><code>TIME DELAY</code></td><td>
 
 Each ray also integrates coordinate time, which in Boyer–Lindquist form is
@@ -306,6 +334,7 @@ Every astrophysical hole is far colder than the 2.7 K microwave background. The 
 | click *(inspect mode)* | trace that pixel's ray | | `D` | release / recall probe |
 | | | | `T` | ray inspector |
 | | | | `X` | flash (flare + echoes) |
+| | | | `J` | jets on / off |
 | | | | `O` | cycle observer mode |
 | | | | `P` | PNG snapshot |
 | | | | `R` | record / stop |
@@ -333,6 +362,9 @@ Every astrophysical hole is far colder than the 2.7 K microwave background. The 
 | | Inner edge at ISCO | on / off | Follows the spin and the rotation sense |
 | | Palette | Cinematic · Blackbody | Blackbody also sets Doppler to 100% |
 | | Temperature, inner/outer edge, luminosity, optical depth, turbulence, rotation | | |
+| Jets | On / off, power | 0 – 4 | Scaled by spin² (off at a/M 0) |
+| | Lorentz factor γ | 1.05 – 10 | Sets β and the strength of beaming |
+| | Opening, length | 0 – 17°, 8 – 80 rₛ | |
 | Camera | Observer | Static · Orbit · Free fall · Boost | Aberration and Doppler from the camera's own motion |
 | | Boost speed | 0 – 0.95c | Boost mode only |
 | | Follow trajectory, observer beaming | on / off | Orbit and fall move with simulation time |
@@ -378,7 +410,7 @@ EventHorizon.snapshot();
 ```
 index.html        HUD markup, field notes
 css/style.css     interface
-js/shaders.js     Kerr geodesic tracer, thin and volumetric disk, sky, bloom, tone mapping (GLSL ES 3.0)
+js/shaders.js     Kerr geodesic tracer, thin and volumetric disk, jets, sky, bloom, tone mapping (GLSL ES 3.0)
 js/main.js        render graph, Kerr helpers, camera, observer modes, probe, ray inspector, UI, export
 docs/             README media
 ```

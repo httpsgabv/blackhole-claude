@@ -59,6 +59,15 @@ uniform float uDelayRef;    // travel time subtracted so "now" is roughly the di
 uniform vec4  uFlare;       // emission time t_f, orbit radius, azimuth at t_f, mode (0 spot, 1 whole disk)
 uniform float uFlareOn;
 uniform float uFlareBright;
+/* relativistic jets along the spin axis */
+uniform float uJetOn;
+uniform float uJetPower;    // includes the spin scaling (Blandford-Znajek, ∝ a²)
+uniform float uJetBeta;
+uniform float uJetGamma;
+uniform float uJetW0;       // width at the base
+uniform float uJetOpen;     // widening per unit height (cone)
+uniform float uJetLen;
+uniform float uJetBase;     // height where the jet starts (just outside the horizon)
 
 uniform vec3  uObsBeta;     // observer velocity relative to a local static observer (units of c)
 uniform float uObsBeam;     // apply observer Doppler beaming to the image
@@ -215,6 +224,41 @@ vec3 diskSource(float r, float phi, float zn, float b, float camE, bool thick, f
   return hue * uDiskBright * (0.15 + f * f) * g4 * 2.2 * streak;
 }
 const vec3 FLARE_COLOR = vec3(0.78, 0.9, 1.0);
+
+/* ------------------------------------------------------------------ */
+/* Jets: optically thin glowing plasma flowing out along ±y at βc.    */
+/* ------------------------------------------------------------------ */
+const vec3 JET_COLOR = vec3(0.55, 0.78, 1.0);
+float jetWidth(float ay){ return uJetW0 + uJetOpen * ay; }
+
+/* emission over a path element ds at scene point p (Boyer-Lindquist Xbl),
+   for a backward ray heading along dir, seen at retarded time te */
+vec3 jetEmission(vec3 p, vec3 Xbl, vec3 dir, float b, float camE, float te, float ds){
+  float ay = abs(p.y);
+  if(ay < uJetBase || ay > uJetLen) return vec3(0.0);
+  float w = jetWidth(ay), u = length(p.xz) / w;
+  if(u > 3.5) return vec3(0.0);
+  /* Gaussian cross-section; total flux spreads as the jet widens; soft ends */
+  float prof = exp(-0.5 * u * u) * (uJetW0 * uJetW0) / (w * w)
+             * smoothstep(uJetBase, uJetBase + 1.0, ay) * (1.0 - smoothstep(0.5 * uJetLen, uJetLen, ay));
+  /* knots: brightness pattern carried outward at βc, with a slow helical twist,
+     evaluated at the time the light left, so they show apparent superluminal motion */
+  float side = p.y > 0.0 ? 0.0 : 13.7;
+  float ang = atan(p.z, p.x) + ay * 0.35 * sign(p.y);
+  float kn = fbm3(vec3(u * 1.2 * cos(ang), u * 1.2 * sin(ang), (ay - uJetBeta * te) * 0.45 + side));
+  kn = 0.3 + 1.6 * smoothstep(0.35, 0.8, kn);
+  /* Doppler from the bulk flow × gravity and frame dragging (camera frame vs local ZAMO) */
+  float D = 1.0 / (uJetGamma * (1.0 - uJetBeta * dot(vec3(0.0, sign(p.y), 0.0), -dir)));
+  float r = Xbl.x, cs = cos(Xbl.y), sn = sin(Xbl.y), a = uA, M = uM;
+  float rho2 = r * r + a * a * cs * cs, Dl = r * r - 2.0 * M * r + a * a;
+  float S2 = (r * r + a * a) * (r * r + a * a) - a * a * Dl * sn * sn;
+  float al = sqrt(max(rho2 * Dl / S2, 1e-6)), om = 2.0 * M * a * r / S2;
+  float G = camE * al / max(1.0 - om * b, 1e-3);
+  float g = clamp(D * mix(1.0, G, uRedshift), 0.0, 12.0);
+  /* synchrotron-like: I ∝ g³; tint bluer when boosted, magenta when dimmed */
+  vec3 tint = mix(vec3(0.95, 0.4, 0.75), JET_COLOR, smoothstep(0.08, 0.6, g));
+  return tint * uJetPower * prof * kn * g * g * g * ds;
+}
 
 /* Thin sheet: emission (premultiplied rgb) + opacity at the equatorial crossing.
    d is the (backward) ray direction in scene space. */
@@ -456,7 +500,7 @@ void main(){
   float jitter = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
   /* rays crossing the gas, or passing near the spin axis, need many short
      steps; the extra budget is only spent by rays that need it */
-  int budget = uMaxSteps * (thick ? 3 : 1) + 256;
+  int budget = uMaxSteps * (thick ? 3 : 1) + (uJetOn > 0.5 ? 512 : 256);
 
   for(int i = 0; i < 3600; i++){
     if(i >= budget) break;
@@ -482,6 +526,11 @@ void main(){
       float snA = max(sin(X.y), 1e-4);
       float w = sqrt(Pm.y * Pm.y + b * b / (snA * snA));
       h = min(h, 0.3 * snA * (X.x * X.x + a2 * cos(X.y) * cos(X.y)) / max(w, 1e-6));
+    }
+    if(uJetOn > 0.5){
+      /* inside or near a jet, step a fraction of its width */
+      float ayj = abs(cPrev.y), wj = jetWidth(ayj);
+      if(ayj < uJetLen * 1.05 && length(cPrev.xz) < 4.0 * wj) h = min(h, max(0.35 * wj, 0.01));
     }
     h = -h;
     kerrStep(X, Pm, T, b, q, h);
@@ -525,6 +574,11 @@ void main(){
         col += (1.0 - alpha) * sm.rgb;
         alpha += (1.0 - alpha) * sm.a;
       }
+    }
+    if(uJetOn > 0.5){
+      float span = min(1.0, tPlan), ts = jitter * span;
+      col += (1.0 - alpha) * jetEmission(mix(cPrev, c1, ts), mix(X0, X, ts), dirOut, b, camE,
+                                         uTime - (mix(T0, T, ts) - uDelayRef), length(seg) * span);
     }
     if(tPlan <= 1.0){
       vec3 hp = mix(cPrev, c1, tPlan);
