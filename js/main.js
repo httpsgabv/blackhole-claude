@@ -55,6 +55,7 @@ const P = {
 const cam = { dist: 40, yaw: -0.9, pitch: 0.35, roll: -14, shiftX: 0.14, shiftY: 0.02, fov: 42 };
 const goal = Object.assign({}, cam, PRESETS.gargantua);
 let simTime = 0;
+let renderPaused = false;   // true while a full-screen view (the anatomy figure) covers the canvas
 /* flare: emitted at coordinate time t from (r, φ) on the disk; mode 1 = whole disk */
 let flare = { on: false, t: 0, r: 4, phi: 0, mode: 0 };
 
@@ -492,12 +493,12 @@ function moveObserver(dSim){
 const bin = { t0: 0 };
 const A_MERGE = 1.0;                       // sum of the two Schwarzschild radii
 const RINGDOWN_OMEGA = 0.56;               // half the remnant's ringdown frequency (≈ 0.53/M_f)
-function binaryState(){
+function binaryState(tAbs = simTime){
   const q = P.binQ, M = KM;
   const m1 = M / (1 + q), m2 = M * q / (1 + q), mu = m1 * m2 / M;
   const K = 12.8 * mu * M * M * P.binSpeed;
   const a0 = Math.max(P.binA0, A_MERGE + 0.05);
-  const t = simTime - bin.t0;
+  const t = tAbs - bin.t0;
   const tMerge = (a0 ** 4 - A_MERGE ** 4) / (4 * K);
   const psiOf = a => Math.sqrt(M) * (a0 ** 2.5 - a ** 2.5) / (2.5 * K);
   let a, psi, Om, merged = false, since = -1e9;
@@ -1217,6 +1218,7 @@ $('#timeline').addEventListener('click', e => {
 const keys = new Set();
 addEventListener('keydown', e => {
   if(e.ctrlKey || e.metaKey || e.altKey) return;
+  if(document.body.classList.contains('anatomy-open')) return;   // the anatomy figure has the keyboard
   const tag = document.activeElement && document.activeElement.tagName;
   const onRange = tag === 'INPUT';
   const k = e.key;
@@ -1696,7 +1698,7 @@ function frame(now){
     if(!Number.isFinite(cam[k])) cam[k] = goal[k];
   }
 
-  render();
+  if(!renderPaused) render();
   if(snapPending){ snapPending = false; doSnapshot(); }
   updateMarkers(dt);
   updateAudio(lastBinary);
@@ -1725,6 +1727,11 @@ window.EventHorizon = {
   snapCamera(){ clampGoal(); Object.assign(cam, goal); },
   togglePanel, toggleHUD, snapshot, toggleRecording,
   releaseProbe, resetProbe, flash: () => triggerFlash(),
+  model: { KM, kerrRPlus, kerrIsco, kerrPhoton, kerrOrbit, zamo },
+  binaryAt: t => binaryState(t),
+  units(){ const m = MASSES[P.mass].m; return { m, rsKm: 2.9532 * m, tUnit: 9.851e-6 * m, fmtDur, fmtSci, fmtLen }; },
+  wormholeL: () => worm.side * cam.dist,
+  pauseRender(on){ renderPaused = !!on; },
   scene: n => setScene(n), restartBinary, travelThrough, binary: () => binaryState(), pulsar: () => pulsarState(),
   wormhole(L){ worm.travel = null; worm.side = L < 0 ? -1 : 1; cam.dist = goal.dist = Math.max(Math.abs(L), 0.02); },
   kerr: { rPlus: () => kerrRPlus(spinA()), isco: s => kerrIsco(spinA(), s || 1), photonOrbit: s => kerrPhoton(spinA(), s || 1) },

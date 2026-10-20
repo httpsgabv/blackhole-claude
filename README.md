@@ -259,6 +259,50 @@ What you see depends on how you move. The camera can **hover**, ride a **circula
 
 <br>
 
+### See its anatomy &nbsp;<sub><code>A</code></sub>
+
+<p align="center">
+  <img src="docs/media/anatomy.jpg" alt="Isometric anatomy figure: the spinning black hole as a bench instrument" width="100%">
+</p>
+<p align="center">
+  <img src="docs/media/anatomy.gif" alt="Anatomy figure as the spin rises: the horizon shrinks, the ISCO and rings move inward" width="100%">
+</p>
+
+The **Anatomy** view explains the hole as a physical instrument rather than a picture. It's an isometric SVG figure in the style of the [Anatomy](https://aiuxplayground.com/skills/anatomy) design approach: solid parts, shaded faces, calm motion, and a framed card with a live readout. Every part is driven by the simulation's own Kerr model:
+
+| Part | What it is |
+|:--|:--|
+| Dark ball | The horizon, r₊ |
+| Recessed well | The ergosphere: its edge is 1 rₛ at the equator |
+| Concentric rings | The disk: each ring turns at its own orbital speed, inner edge locked to the ISCO, tinted by its temperature |
+| Bright bead | Gas on the ISCO, the one lit part |
+| Engraved cyan grooves | Photon orbits, with and against the spin |
+| Vane on the axle | Frame dragging (turn rate ×8 for visibility) |
+| Crown · dial · ruler | Set the spin · read a/M · sliders mark r₊ and the ISCO |
+
+Drag sideways or press ← → to change the spin; the WebGL renderer pauses while the figure is open.
+
+Three more figures cover the other scenes (tabs or keys 1–4; the view opens on the scene you are in):
+
+<table>
+  <tr>
+    <td width="33%"><img src="docs/media/anatomy-binary.jpg" alt="Anatomy of a binary black hole: orrery, wave plate and chirp recorder" width="100%"></td>
+    <td width="33%"><img src="docs/media/anatomy-jets.jpg" alt="Anatomy of a relativistic jet: hole in a test stand with jets and field coils" width="100%"></td>
+    <td width="33%"><img src="docs/media/anatomy-wormhole.jpg" alt="Anatomy of a wormhole: the embedding funnel joining two universes" width="100%"></td>
+  </tr>
+  <tr>
+    <td><sub><code>FIG. 2</code> &nbsp;ORRERY · WAVE PLATE · CHIRP CHART</sub></td>
+    <td><sub><code>FIG. 3</code> &nbsp;JETS · FIELD COILS · DOPPLER</sub></td>
+    <td><sub><code>FIG. 4</code> &nbsp;EMBEDDING FUNNEL · TWO UNIVERSES</sub></td>
+  </tr>
+</table>
+
+| Figure | The instrument | Driven by | Drag to |
+|:--|:--|:--|:--|
+| **2 · Binary** | A two-ball orrery on a telescoping arm over a plate engraved with the wave crests; a strip chart records h ∝ (aΩ)² cos 2ψ; a crank turns with time | The Peters inspiral, merger and ringdown | Scrub time |
+| **3 · Jets** | The hole in a test stand, disk on brackets; collars stream out at βc inside helical field coils; γ and power dials | γ, β, Doppler factors D = 1/γ(1 ∓ β cos 54.7°) for the drawing's own view, P ∝ a² | Set γ |
+| **4 · Wormhole** | The exact Ellis embedding, z = b₀ asinh(ℓ/b₀), r = √(b₀² + ℓ²), as a glass funnel between two plates: our universe above, the other below | The throat b₀ and the camera's ℓ | Move the traveller (and the camera) through the throat |
+
 ## `03` &nbsp;INTERFACE
 
 <p align="center">
@@ -389,6 +433,7 @@ Every astrophysical hole is far colder than the 2.7 K microwave background. The 
 | | | | `X` | flash (flare + echoes) |
 | | | | `J` | jets on / off |
 | | | | `B` · `W` | binary · wormhole scene |
+| | | | `A` | anatomy view |
 | | | | `U` | pulsar on / off |
 | | | | `O` | cycle observer mode |
 | | | | `P` | PNG snapshot |
@@ -474,6 +519,7 @@ EventHorizon.snapshot();
 index.html        HUD markup, field notes
 css/style.css     interface
 js/shaders.js     Kerr, binary and wormhole tracers, disk, jets, pulsar, skies, bloom, tone mapping (GLSL ES 3.0)
+js/anatomy.js     the anatomy figure: isometric SVG kit, parts, card, interaction
 js/main.js        render graph, Kerr helpers, scenes (binary, wormhole, pulsar), camera, observers, probe, inspector, UI, export
 docs/             README media
 ```
