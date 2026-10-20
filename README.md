@@ -83,7 +83,34 @@ Then open **http://localhost:5179**. Opening `index.html` directly also works. A
 
 <br>
 
-## `02` &nbsp;INTERFACE
+## `02` &nbsp;EXPERIMENTS
+
+### Drop the probe &nbsp;<sub><code>D</code></sub>
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/media/probe-fall.gif" alt="The probe released from orbit, spiralling in and fading at the horizon" width="100%"></td>
+    <td width="50%"><img src="docs/media/probe-lensed.jpg" alt="The probe directly behind the hole: two stretched, lensed images on either side of the shadow" width="100%"></td>
+  </tr>
+  <tr>
+    <td><sub><code>FALLING</code> &nbsp;SLOWS, REDDENS, FADES · NEVER SEEN TO CROSS</sub></td>
+    <td><sub><code>TRUE POSITION</code> &nbsp;BEHIND THE SHADOW · SEEN AS TWO STRETCHED IMAGES</sub></td>
+  </tr>
+</table>
+
+Release the orbiting probe and it follows a real free-fall path, solved with RK4 in its own proper time. Set *Angular momentum kept* to 0% for a straight plunge, or keep most of it for a precessing orbit. Two clocks disagree: the probe's own time **τ** reaches the horizon in a finite time, while from outside the probe slows, reddens and fades away (r − r<sub>s</sub> ∝ e<sup>−t</sup>). The **TIDAL · 2 m** readout gives the real stretching force on a 2 m body at the current mass scale: about 2×10⁷ g at the horizon of a 10 M☉ hole, about 2×10⁻⁷ g at the horizon of a 10⁸ M☉ one.
+
+### Inspect a ray &nbsp;<sub><code>T</code></sub>
+
+<p align="center">
+  <img src="docs/media/inspector.jpg" alt="Ray inspector: a ray bent 118 degrees around the hole, drawn in its orbital plane" width="100%">
+</p>
+
+Click any pixel to trace its light ray backwards. A light ray around a non-rotating black hole always stays in one plane, and that plane contains both the camera and the hole, so a single 2D diagram shows the whole path. The panel reports where the ray ended up (horizon, sky, disk or probe), its impact parameter against the critical value b꜀ = 3√3⁄2 r<sub>s</sub>, the closest approach, and the total bending. It also says which image of the disk the pixel shows: primary, secondary, or a higher order inside the photon ring.
+
+<br>
+
+## `03` &nbsp;INTERFACE
 
 <p align="center">
   <img src="docs/media/interface.gif" alt="The interface: telemetry, control matrix and timeline" width="100%">
@@ -91,14 +118,15 @@ Then open **http://localhost:5179**. Opening `index.html` directly also works. A
 
 | &nbsp; | Region | Contents |
 |:--|:--|:--|
-| `▣` | **Telemetry** · top left | Camera radius, physical distance, inclination, camera clock rate, escape velocity, probe clock rate, Schwarzschild radius, frame rate |
+| `▣` | **Telemetry** · top left | Camera radius, physical distance, inclination, camera clock rate, escape velocity; probe state, radius, clock rate, proper time, redshift and tidal force; Schwarzschild radius, frame rate |
+| `⌖` | **Ray inspector** · left | Orbital-plane diagram of the clicked ray, its outcome and numbers, and a plain-language reading |
 | `≡` | **Control matrix** · right | Six numbered sections: Simulation, Spacetime, Accretion Disk, Camera, Render, Export. Double-click a slider to reset it |
 | `▶` | **Timeline** · bottom | Reset, slower/reverse, play/pause, faster, step, rate, simulation time in rₛ/c and in physical units, probe orbit phase |
 | `?` | **Field notes** · top right | A short primer on every effect on screen |
 
 <br>
 
-## `03` &nbsp;PHYSICS
+## `04` &nbsp;PHYSICS
 
 Units throughout: $r_s = 2GM/c^2 = 1$ and $c = 1$.
 
@@ -132,6 +160,15 @@ Gas orbits at $\beta = \sqrt{0.5/(r-1)}$, which is about $0.5c$ at the ISCO. The
 $$g = \frac{1}{\gamma\,(1-\beta\cos\theta)}\;\sqrt{\frac{1-1/r}{1-1/r_{cam}}}$$
 
 </td></tr>
+<tr><td><code>FREE FALL</code></td><td>
+
+The probe integrates the timelike geodesic in proper time τ, with $M = \tfrac12$:
+
+$$\frac{d^2r}{d\tau^2} = -\frac{M}{r^2} + \frac{L^2}{r^3} - \frac{3ML^2}{r^4}, \qquad \frac{dt}{d\tau} = \frac{E}{1 - r_s/r}$$
+
+The renderer places it by coordinate time t, which diverges at the horizon. The tidal force is $\Delta a = 2GM\,\ell / R^3$.
+
+</td></tr>
 <tr><td><code>TIME DILATION</code></td><td>
 
 A static clock runs at $\sqrt{1 - r_s/r}$. A clock on a circular orbit runs at $\sqrt{1 - 1.5\,r_s/r}$, which is the probe's <code>τ/t</code> readout. Below 3 rₛ its orbit is flagged <code>UNSTABLE</code>.
@@ -141,7 +178,7 @@ A static clock runs at $\sqrt{1 - r_s/r}$. A clock on a circular orbit runs at $
 
 <br>
 
-## `04` &nbsp;CONTROLS
+## `05` &nbsp;CONTROLS
 
 | Input | Action | &nbsp; | Key | Action |
 |:--|:--|:-:|:-:|:--|
@@ -151,6 +188,8 @@ A static clock runs at $\sqrt{1 - r_s/r}$. A clock on a circular orbit runs at $
 | `← ↑ → ↓` | orbit | | `0` | reset time |
 | `+` `−` | dolly | | `1`–`4` | camera presets |
 | double-click | Gargantua preset | | `G` | equatorial guides |
+| click *(inspect mode)* | trace that pixel's ray | | `D` | release / recall probe |
+| | | | `T` | ray inspector |
 | | | | `P` | PNG snapshot |
 | | | | `R` | record / stop |
 | | | | `H` · `C` · `I` · `F` | hide UI · panel · notes · fullscreen |
@@ -164,6 +203,8 @@ A static clock runs at $\sqrt{1 - r_s/r}$. A clock on a circular orbit runs at $
 | Simulation | Time rate | −4× … 4× | Negative runs time backwards |
 | | Mass scale | 10 M☉ · Sgr A* · 10⁸ M☉ · M87* | Physical units only; the geometry is scale-free |
 | | Probe orbit | 2 – 18 rₛ, 0 – 80° | Circular geodesic, lensed like everything else |
+| | Angular momentum kept | 0 – 98% | Share of orbital L kept on release |
+| | Tidal stretch | on / off | Visual, exaggerated; the telemetry gives the real value |
 | Spacetime | Light bending | 0 – 100% | Multiplies the geodesic curvature |
 | | Doppler beaming | 0 – 100% | Scales the disk velocity used for beaming |
 | | Gravitational redshift | on / off | |
@@ -178,7 +219,7 @@ A static clock runs at $\sqrt{1 - r_s/r}$. A clock on a circular orbit runs at $
 
 <br>
 
-## `05` &nbsp;EXPORT
+## `06` &nbsp;EXPORT
 
 | Output | Format | Options |
 |:--|:--|:--|
@@ -189,25 +230,27 @@ Clips are encoded in real time with `MediaRecorder`. Fixed output sizes resize t
 
 <br>
 
-## `06` &nbsp;CONSOLE API
+## `07` &nbsp;CONSOLE API
 
 ```js
 EventHorizon.set({ sky: 'grid', guides: true, gravity: 0.5 });
 EventHorizon.preset('edge');          // gargantua · edge · top · close
 EventHorizon.camera.dist = 6;         // eased; call snapCamera() to jump
 EventHorizon.time = 0;
+EventHorizon.releaseProbe();          // resetProbe() to recall it
+EventHorizon.inspect(640, 300);       // trace the ray at CSS pixel (x, y)
 EventHorizon.snapshot();
 ```
 
 <br>
 
-## `07` &nbsp;STRUCTURE
+## `08` &nbsp;STRUCTURE
 
 ```
 index.html        HUD markup, field notes
 css/style.css     interface
 js/shaders.js     geodesic tracer, disk, sky, bloom, tone mapping (GLSL ES 3.0)
-js/main.js        render graph, camera, time, UI, telemetry, export
+js/main.js        render graph, camera, time, probe geodesic, ray inspector, UI, export
 docs/             README media
 ```
 

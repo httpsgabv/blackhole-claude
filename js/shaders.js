@@ -45,6 +45,8 @@ uniform float uGuides;
 
 uniform float uPlanetOn;
 uniform vec4  uPlanet;
+uniform vec4  uProbeAxis;   // xyz radial unit vector, w tidal stretch factor
+uniform float uProbeG;      // observed frequency shift ν_obs/ν_emit
 
 const float PI = 3.14159265359;
 
@@ -160,8 +162,19 @@ vec3 guides(vec3 p, float rCam){
   return c;
 }
 
+/* world offset -> unit-sphere space of the tidally stretched probe
+   (radial semi-axis scaled by a, lateral by 1/sqrt(a): volume preserved) */
+vec3 probeSpace(vec3 x){
+  vec3 n = uProbeAxis.xyz;
+  float a = uProbeAxis.w, xn = dot(x, n);
+  return (x - xn * n) * sqrt(a) + xn * n / a;
+}
+
 vec3 shadePlanet(vec3 hp, vec3 d){
-  vec3 n = normalize(hp - uPlanet.xyz);
+  vec3 q = normalize(probeSpace(hp - uPlanet.xyz));
+  vec3 ax = uProbeAxis.xyz;
+  float qn = dot(q, ax);
+  vec3 n = normalize((q - qn * ax) * sqrt(uProbeAxis.w) + qn * ax / uProbeAxis.w);
   vec3 L = normalize(-uPlanet.xyz);
   float lam = max(dot(n, L), 0.0);
   float tex = fbm(n * 3.5 + 11.0);
@@ -169,7 +182,11 @@ vec3 shadePlanet(vec3 hp, vec3 d){
   vec3 c = alb * (lam * vec3(1.0, 0.72, 0.48) * 1.4 + abs(n.y) * vec3(1.0, 0.7, 0.45) * 0.12 + 0.01);
   float rim = pow(1.0 - max(dot(n, -d), 0.0), 5.0);
   c += rim * vec3(1.0, 0.75, 0.5) * 0.35 * (0.3 + lam);
-  return c;
+  /* redshift dims (∝ g³) and reddens; blueshift brightens and cools the tint */
+  float g = clamp(uProbeG, 0.0, 3.0);
+  vec3 tint = g < 1.0 ? mix(vec3(1.0, 0.18, 0.04), vec3(1.0), smoothstep(0.25, 1.0, g))
+                      : mix(vec3(1.0), vec3(0.7, 0.85, 1.25), clamp(g - 1.0, 0.0, 1.0));
+  return c * tint * g * g * g;
 }
 
 vec3 starSky(vec3 d){
@@ -250,17 +267,15 @@ void main(){
     float tDisk = 2.0, tPlan = 2.0;
     if(pos.y * np.y < 0.0) tDisk = pos.y / (pos.y - np.y);
     if(uPlanetOn > 0.5){
-      vec3 seg = np - pos;
-      float L = length(seg);
-      vec3 sd = seg / L;
-      vec3 oc = pos - uPlanet.xyz;
-      float b = dot(oc, sd);
-      float c = dot(oc, oc) - uPlanet.w * uPlanet.w;
-      float disc = b * b - c;
+      /* segment vs. stretched ellipsoid, solved in the probe's sphere space */
+      vec3 o = probeSpace(pos - uPlanet.xyz);
+      vec3 e = probeSpace(np - pos);
+      float A = dot(e, e), B = dot(o, e), C = dot(o, o) - uPlanet.w * uPlanet.w;
+      float disc = B * B - A * C;
       if(disc > 0.0){
-        float s = -b - sqrt(disc);
-        if(s >= 0.0 && s <= L) tPlan = s / L;
-        else if(c < 0.0) tPlan = 0.0;
+        float s = (-B - sqrt(disc)) / A;
+        if(s >= 0.0 && s <= 1.0) tPlan = s;
+        else if(C < 0.0) tPlan = 0.0;
       }
     }
 

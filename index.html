@@ -25,6 +25,9 @@
   </header>
 
   <nav id="actions">
+    <button class="text-btn" id="btnRay" title="Ray inspector: click a pixel to trace its light ray (T)">
+      <svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="4.5"/><path d="M8 1v4M8 11v4M1 8h4M11 8h4"/></svg>INSPECT RAY
+    </button>
     <button class="icon-btn" id="btnInfo" title="About the physics (I)">?</button>
     <button class="icon-btn" id="btnFull" title="Fullscreen (F)">
       <svg viewBox="0 0 16 16"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"/></svg>
@@ -39,6 +42,24 @@
     <div class="panel-head"><span>CONTROL MATRIX</span><span class="faint" id="panelMeta">GL2</span></div>
     <div id="sections"></div>
   </aside>
+
+  <aside id="inspector" hidden>
+    <div class="panel-head">
+      <span>RAY INSPECTOR</span>
+      <span class="insp-tools">
+        <span class="mini-seg"><button data-zoom="wide" class="on">WIDE</button><button data-zoom="near">NEAR</button></span>
+        <button class="x" id="inspClose" title="Close (T)">×</button>
+      </span>
+    </div>
+    <svg id="raySvg" viewBox="0 0 260 260" aria-label="Ray path in its orbital plane"></svg>
+    <div class="ray-legend">
+      <span><i class="l-ray"></i>RAY</span><span><i class="l-ps"></i>PHOTON SPHERE</span><span><i class="l-disk"></i>DISK SLICE</span>
+    </div>
+    <dl id="rayStats"></dl>
+    <p id="rayNote"></p>
+  </aside>
+  <div id="rayMark"><i></i><span>RAY</span></div>
+  <div id="probeMark"><i></i><span>PROBE</span></div>
 
   <div id="legend">
     <div><i style="background:var(--cyan)"></i>PHOTON SPHERE · 1.5 r<sub>s</sub></div>
@@ -62,8 +83,8 @@
     <div class="tl-read"><span class="k">T</span><span id="tlTime">0.0</span><span class="u">r<sub>s</sub>/c</span></div>
     <div class="tl-read wide"><span class="k">≈</span><span id="tlPhys">0 s</span></div>
     <span class="tl-sep"></span>
-    <div class="tl-orbit" title="Orbital phase of the probe">
-      <span class="k">ORBIT</span>
+    <div class="tl-orbit" title="Probe: orbital phase, or progress of the fall">
+      <span class="k" id="tlPhaseLabel">ORBIT</span>
       <div class="tl-bar"><div id="tlPhase"></div></div>
     </div>
   </footer>
@@ -88,10 +109,14 @@
         <p>Gas near the ISCO moves at about half the speed of light. The side moving toward you looks brighter and bluer (intensity ∝ g⁴), the receding side dimmer and redder. Try the <em>Blackbody</em> palette at 100% Doppler.</p>
         <h4><span>06</span>Gravitational redshift & time dilation</h4>
         <p>Light climbing out of the well loses energy by √(1 − r<sub>s</sub>/r). Clocks near the hole run slow by the same factor. The telemetry shows your camera's clock rate and the orbiting probe's (√(1 − 1.5 r<sub>s</sub>/r) for a circular orbit).</p>
-        <h4><span>07</span>Mass scale</h4>
+        <h4><span>07</span>Falling in · press D</h4>
+        <p>Released from its orbit, the probe follows a real free-fall path. Its own clock (<em>PROBE τ</em>) reaches the horizon in a finite time. Seen from outside, it slows, reddens and fades, and never quite crosses: its light takes ever longer to climb out. Tidal forces stretch it along the fall direction. The <em>TIDAL · 2 m</em> readout gives the real stretching force on a 2 m body. It is lethal near a 10 M☉ black hole, but barely noticeable at the horizon of a supermassive one.</p>
+        <h4><span>08</span>Ray inspector · press T</h4>
+        <p>Click any pixel to follow its light ray backwards. A light ray around a non-rotating black hole always stays in one plane, so the diagram shows its whole path. It tells you whether the ray hit the disk (and which image: primary, secondary, or deeper in the photon ring), the probe or the sky, or fell into the horizon. The deciding number is the impact parameter <em>b</em>: rays with b below b꜀ ≈ 2.6 r<sub>s</sub> are captured.</p>
+        <h4><span>09</span>Mass scale</h4>
         <p>Everything scales with mass. The picture is identical for a 10 M☉ black hole and M87*, but one r<sub>s</sub>/c is 0.1 ms for the first and 18 hours for the second.</p>
-        <h4><span>08</span>Keys</h4>
-        <p class="keys"><b>Drag</b> orbit · <b>Shift/RMB drag</b> pan · <b>Wheel</b> zoom · <b>←↑→↓</b> orbit · <b>Space</b> play/pause · <b>[ ]</b> rate · <b>.</b> step · <b>0</b> reset time · <b>1–4</b> camera presets · <b>G</b> guides · <b>P</b> snapshot · <b>R</b> record · <b>H</b> hide UI · <b>F</b> fullscreen</p>
+        <h4><span>10</span>Keys</h4>
+        <p class="keys"><b>Drag</b> orbit · <b>Shift/RMB drag</b> pan · <b>Wheel</b> zoom · <b>←↑→↓</b> orbit · <b>Space</b> play/pause · <b>[ ]</b> rate · <b>.</b> step · <b>0</b> reset time · <b>1–4</b> camera presets · <b>G</b> guides · <b>D</b> release/recall probe · <b>T</b> ray inspector · <b>P</b> snapshot · <b>R</b> record · <b>H</b> hide UI · <b>F</b> fullscreen</p>
       </div>
     </div>
   </div>

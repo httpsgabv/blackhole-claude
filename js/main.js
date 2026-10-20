@@ -35,7 +35,7 @@ const PRESETS = {
 
 const P = {
   speed: 1, playing: true, mass: 'gargantua',
-  planetOn: true, planetR: 9, planetInc: 10, planetSize: 0.24,
+  planetOn: true, planetR: 9, planetInc: 10, planetSize: 0.24, infallL: 0.6, tidal: true,
   gravity: 1, redshift: true, doppler: 0.35, sky: 'stars', stars: 1, guides: false,
   diskOn: true, palette: 'cinematic', diskIn: 3, diskOut: 13, diskTemp: 6500, diskBright: 0.55,
   turb: 0.7, opacity: 1.4, spin: 1,
@@ -180,12 +180,99 @@ function applyPreset(name){
   syncUI();
 }
 
+/* ================================================================== */
+/* Probe: circular orbit, or free fall along a timelike geodesic       */
+/* ================================================================== */
+/* Infall is integrated in the probe's proper time τ (M = 0.5, r_s = 1):
+     d²r/dτ² = −M/r² + L²/r³ − 3ML²/r⁴,  dφ/dτ = L/r²,  dt/dτ = E/(1 − 1/r)
+   and stored as a table keyed by coordinate time t, which is what a distant
+   observer (and the renderer) uses. Near the horizon t diverges: from outside
+   the probe freezes and fades, while τ reaches the horizon in finite time. */
+const probe = { falling: false, t0: 0, phi0: 0, R0: 0, L: 0, E: 1, tab: null, tauH: Infinity, bound: false };
+
+const orbitPhase = t => Math.sqrt(0.5 / Math.pow(P.planetR, 3)) * P.spin * t + 2.2;
+
+function releaseProbe(){
+  const R = P.planetR, M = 0.5;
+  const Lc = Math.sqrt(M * R * R / Math.max(R - 1.5, 1e-3));
+  const L = Lc * P.infallL, E = Math.sqrt((1 - 1 / R) * (1 + L * L / (R * R)));
+  const acc = r => -M / (r * r) + L * L / (r * r * r) - 3 * M * L * L / (r * r * r * r);
+  const deriv = y => [y[1], acc(y[0]), L / (y[0] * y[0]), E / (1 - 1 / y[0])];
+  let y = [R, 0, 0, 0], tau = 0;
+  const T = [0], TAU = [0], RR = [R], PH = [0], VR = [0];
+  probe.bound = true;
+  for(let i = 0; i < 400000; i++){
+    const r = y[0];
+    if(r < 1 + 1e-6){ probe.bound = false; break; }
+    if(y[3] > 6000) break;
+    const h = 0.004 * Math.min(Math.pow(r, 1.5), 40) * Math.min(1, (r - 1) * 4 + 0.02);
+    const k1 = deriv(y);
+    const k2 = deriv(y.map((v, j) => v + 0.5 * h * k1[j]));
+    const k3 = deriv(y.map((v, j) => v + 0.5 * h * k2[j]));
+    const k4 = deriv(y.map((v, j) => v + h * k3[j]));
+    y = y.map((v, j) => v + h / 6 * (k1[j] + 2 * k2[j] + 2 * k3[j] + k4[j]));
+    tau += h;
+    if(!(y[0] > 0)) { probe.bound = false; break; }
+    T.push(y[3]); TAU.push(tau); RR.push(Math.max(y[0], 1 + 1e-7)); PH.push(y[2]); VR.push(y[1]);
+  }
+  Object.assign(probe, { falling: true, t0: simTime, phi0: orbitPhase(simTime), R0: R, L, E,
+    tab: { T, TAU, RR, PH, VR }, tauH: probe.bound ? Infinity : tau });
+  P.planetOn = true;
+  syncUI();
+}
+function resetProbe(){ probe.falling = false; probe.tab = null; syncUI(); }
+function toggleProbe(){ if(probe.falling) resetProbe(); else releaseProbe(); }
+
+/* state at coordinate time t: r, φ, proper time τ, radial velocity dr/dτ */
+function fallState(t){
+  const { T, TAU, RR, PH, VR } = probe.tab, n = T.length - 1;
+  const dt = t - probe.t0;
+  if(dt >= T[n]){
+    // past the table: r − 1 ∝ e^(−t) as seen from infinity
+    const r = 1 + (RR[n] - 1) * Math.exp(-(dt - T[n]));
+    return { r: probe.bound ? RR[n] : r, phi: PH[n], tau: TAU[n], vr: probe.bound ? VR[n] : 0, frozen: !probe.bound };
+  }
+  let lo = 0, hi = n;
+  while(hi - lo > 1){ const m = (lo + hi) >> 1; if(T[m] <= dt) lo = m; else hi = m; }
+  const f = (dt - T[lo]) / Math.max(T[hi] - T[lo], 1e-12);
+  const L = (a, b) => a + (b - a) * f;
+  return { r: L(RR[lo], RR[hi]), phi: L(PH[lo], PH[hi]), tau: L(TAU[lo], TAU[hi]), vr: L(VR[lo], VR[hi]), frozen: false };
+}
+
 function planetPos(){
-  const R = P.planetR, w = Math.sqrt(0.5 / (R * R * R)) * P.spin;
-  const ph = w * simTime + 2.2;
-  const i = P.planetInc * Math.PI / 180;
-  const x = R * Math.cos(ph), z0 = R * Math.sin(ph);
-  return { p: [x, z0 * Math.sin(i), z0 * Math.cos(i)], phase: ((ph / (2 * Math.PI)) % 1 + 1) % 1 };
+  const inc = P.planetInc * Math.PI / 180;
+  const toWorld = (a, b) => [a, b * Math.sin(inc), b * Math.cos(inc)];   // orbit plane -> world
+  let r, ph, vRad, vTan, st = null;
+  if(probe.falling && simTime >= probe.t0){
+    st = fallState(simTime);
+    r = st.r;
+    ph = probe.phi0 + st.phi * P.spin;
+    // velocity measured by a local static observer
+    vRad = st.vr / probe.E;
+    vTan = probe.L * Math.sqrt(Math.max(0, 1 - 1 / r)) / (r * probe.E) * P.spin;
+  } else {
+    r = P.planetR; ph = orbitPhase(simTime);
+    vRad = 0; vTan = Math.sqrt(0.5 / Math.max(r - 1, 0.05)) * P.spin;
+  }
+  const c = Math.cos(ph), s = Math.sin(ph);
+  const p = toWorld(r * c, r * s);
+  const er = toWorld(c, s), ep = toWorld(-s, c);
+  const v = add(scl(er, vRad), scl(ep, vTan));
+  const beta = Math.min(Math.hypot(v[0], v[1], v[2]), 0.999);
+  // frequency shift seen by the camera: Doppler × gravitational
+  // (emission direction approximated by the straight line to the camera)
+  const n = norm(sub(cameraBasis().pos, p));
+  const gamma = 1 / Math.sqrt(1 - beta * beta);
+  const doppler = 1 / (gamma * (1 - (v[0] * n[0] + v[1] * n[1] + v[2] * n[2])));
+  const rc = cam.dist;
+  const grav = Math.sqrt(Math.max(1 - 1 / r, 0)) / Math.sqrt(Math.max(1 - 1 / rc, 1e-3));
+  const g = doppler * (P.redshift ? grav : 1);
+  // tidal stretch along the radial direction (visual, exaggerated)
+  const stretch = P.tidal ? 1 + 2.5 / (r * r * r) : 1;
+  const phase = probe.falling && st
+    ? Math.min(1, Math.max(0, (probe.R0 - r) / (probe.R0 - 1)))
+    : ((ph / (2 * Math.PI)) % 1 + 1) % 1;
+  return { p, r, g, beta, axis: er, stretch, st, phase };
 }
 
 /* ================================================================== */
@@ -235,6 +322,8 @@ function render(){
   u1f(pr, 'uGuides', P.guides ? 1 : 0);
   u1f(pr, 'uPlanetOn', P.planetOn ? 1 : 0);
   u4f(pr, 'uPlanet', [pl.p[0], pl.p[1], pl.p[2], P.planetSize]);
+  u4f(pr, 'uProbeAxis', [pl.axis[0], pl.axis[1], pl.axis[2], pl.stretch]);
+  u1f(pr, 'uProbeG', pl.g);
   draw();
 
   /* --- bloom --- */
@@ -301,6 +390,10 @@ const SECTIONS = [
     { t: 'range', k: 'planetR', label: 'Orbit radius', min: 2, max: 18, step: 0.1, fmt: v => v.toFixed(1) + ' rₛ', dep: 'planetOn',
       hint: 'Circular orbits below 3 rₛ (ISCO) are unstable.' },
     { t: 'range', k: 'planetInc', label: 'Orbit inclination', min: 0, max: 80, step: 1, fmt: v => v + '°', dep: 'planetOn' },
+    { t: 'range', k: 'infallL', label: 'Angular momentum kept', min: 0, max: 0.98, step: 0.01, fmt: pct, dep: 'planetOn',
+      hint: 'Share of its orbital angular momentum the probe keeps on release. 0% is a straight radial plunge; high values give a precessing orbit.' },
+    { t: 'buttons', items: [['<span class="drop-label">Release probe</span>', () => toggleProbe(), 'wide drop']] },
+    { t: 'toggle', k: 'tidal', label: 'Tidal stretch (exaggerated)', dep: 'planetOn' },
   ]},
   { id: 'space', title: 'Spacetime', items: [
     { t: 'range', k: 'gravity', label: 'Light bending', min: 0, max: 1, step: 0.01, fmt: pct,
@@ -419,9 +512,15 @@ function syncUI(){
   $('#timeline').classList.toggle('playing', P.playing);
   $('#tlRate').textContent = '×' + P.speed.toFixed(2);
   $('#legend').classList.toggle('on', P.guides);
+  const drop = document.querySelector('.btn.drop');
+  if(drop){
+    drop.classList.toggle('active', probe.falling);
+    drop.querySelector('.drop-label').textContent = probe.falling ? 'Recall probe to orbit' : 'Release probe  ·  D';
+  }
 }
 
 function onParam(k){
+  if(k === 'planetR' && probe.falling) resetProbe();
   if(k === 'fov' || k === 'roll') goal[k] = P[k];
   if(k === 'diskIn' && P.diskOut < P.diskIn + 1){ P.diskOut = P.diskIn + 1; }
   if(k === 'diskOut' && P.diskIn > P.diskOut - 1){ P.diskIn = Math.max(1.5, P.diskOut - 1); }
@@ -439,7 +538,8 @@ const DEFAULTS = Object.assign({}, P);
 /* ================================================================== */
 const TELE = [
   ['R_CAM', 'rcam'], ['DISTANCE', 'rphys'], ['INCLINATION', 'incl'], ['CLOCK RATE', 'clock'],
-  ['ESCAPE V', 'vesc'], ['PROBE τ/t', 'probe'], ['R_S', 'rs'], ['FRAME', 'fps'],
+  ['ESCAPE V', 'vesc'], ['PROBE', 'pstate'], ['PROBE R', 'pr'], ['PROBE τ/t', 'probe'], ['PROBE τ', 'ptau'],
+  ['REDSHIFT g', 'pg'], ['TIDAL · 2 m', 'tidal'], ['R_S', 'rs'], ['FRAME', 'fps'],
 ];
 const teleEls = {};
 (function(){
@@ -469,6 +569,44 @@ function fmtDur(s){
   return sign + (a / 3.15576e7).toFixed(2) + ' yr';
 }
 
+const G0 = 9.80665, C2 = 8.98755e16;
+function fmtSci(v){
+  if(v === 0) return '0';
+  if(v >= 0.01 && v < 1e5) return v.toPrecision(3);
+  const e = Math.floor(Math.log10(v));
+  return (v / Math.pow(10, e)).toFixed(2) + 'e' + e;
+}
+function setTele(id, text, warn){ teleEls[id].textContent = text; teleEls[id].classList.toggle('warn', !!warn); }
+function updateProbeTelemetry(rsKm, tUnit){
+  const pl = lastPlanet;
+  if(!P.planetOn || !pl){
+    for(const id of ['pstate', 'pr', 'probe', 'ptau', 'pg', 'tidal']) setTele(id, id === 'pstate' ? 'OFF' : '—');
+    return;
+  }
+  const r = pl.r, st = pl.st;
+  let state, rate, tau = '—';
+  if(st){
+    if(st.frozen){ state = 'FROZEN AT HORIZON'; }
+    else if(probe.bound){ state = 'PRECESSING ORBIT'; }
+    else { state = 'FALLING'; }
+    rate = (1 - 1 / r) / probe.E;                       // dτ/dt along the geodesic
+    tau = st.tau.toFixed(2) + ' rₛ/c';
+    if(!probe.bound) tau += ' / ' + probe.tauH.toFixed(2);
+  } else {
+    state = r < 3 ? 'ORBIT · UNSTABLE' : 'CIRCULAR ORBIT';
+    rate = r > 1.5 ? Math.sqrt(1 - 1.5 / r) : 0;
+  }
+  setTele('pstate', state, st ? !probe.bound : r < 3);
+  setTele('pr', r < 1.001 ? (1 + (r - 1)).toFixed(6) + ' rₛ' : r.toFixed(3) + ' rₛ');
+  setTele('probe', rate.toFixed(4) + '×');
+  setTele('ptau', tau);
+  setTele('pg', pl.g.toFixed(3) + (pl.g < 0.5 ? ' DIM' : pl.g > 1.2 ? ' BLUE' : ''), pl.g < 0.5);
+  // radial tidal acceleration across a 2 m body: Δa = c² L / (r_s² r³)
+  const rsM = rsKm * 1e3;
+  const da = C2 * 2 / (rsM * rsM * r * r * r) / G0;
+  setTele('tidal', fmtSci(da) + ' g' + (da > 30 ? ' LETHAL' : ''), da > 30);
+}
+
 let fpsAvg = 60, teleTimer = 0;
 function updateTelemetry(dt){
   if(dt > 0) fpsAvg += (1 / dt - fpsAvg) * 0.05;
@@ -476,7 +614,10 @@ function updateTelemetry(dt){
   const m = MASSES[P.mass].m, rsKm = 2.9532 * m, tUnit = 9.851e-6 * m;
   $('#tlTime').textContent = simTime.toFixed(1);
   $('#tlPhys').textContent = fmtDur(simTime * tUnit);
-  if(lastPlanet) $('#tlPhase').style.width = (lastPlanet.phase * 100).toFixed(1) + '%';
+  if(lastPlanet){
+    $('#tlPhase').style.width = (lastPlanet.phase * 100).toFixed(1) + '%';
+    $('#tlPhaseLabel').textContent = lastPlanet.st ? 'FALL' : 'ORBIT';
+  }
   if(teleTimer > 0) return;
   teleTimer = 0.12;
   const r = cam.dist;
@@ -485,11 +626,7 @@ function updateTelemetry(dt){
   teleEls.incl.textContent = (90 - cam.pitch * 180 / Math.PI).toFixed(1) + '°';
   teleEls.clock.textContent = Math.sqrt(Math.max(0, 1 - 1 / r)).toFixed(4) + '×';
   teleEls.vesc.textContent = Math.sqrt(1 / r).toFixed(3) + ' c';
-  if(P.planetOn){
-    const R = P.planetR;
-    teleEls.probe.textContent = R > 1.5 ? Math.sqrt(1 - 1.5 / R).toFixed(4) + (R < 3 ? ' UNSTABLE' : '') : '—';
-    teleEls.probe.classList.toggle('warn', R < 3);
-  } else { teleEls.probe.textContent = 'OFF'; teleEls.probe.classList.remove('warn'); }
+  updateProbeTelemetry(rsKm, tUnit);
   teleEls.rs.textContent = fmtLen(rsKm);
   teleEls.fps.textContent = Math.round(fpsAvg) + ' FPS · ' + Math.round(canvas.width * P.scale) + '×' + Math.round(canvas.height * P.scale);
 }
@@ -502,7 +639,7 @@ let dragMode = null, pinchStart = 0, pinchDist = 0;
 canvas.addEventListener('contextmenu', e => e.preventDefault());
 canvas.addEventListener('pointerdown', e => {
   canvas.setPointerCapture(e.pointerId);
-  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, t0: performance.now() });
   if(pointers.size === 2){
     const [a, b] = [...pointers.values()];
     pinchStart = Math.hypot(a.x - b.x, a.y - b.y); pinchDist = goal.dist; dragMode = 'pinch';
@@ -531,6 +668,12 @@ canvas.addEventListener('pointermove', e => {
   clampGoal();
 });
 function endPointer(e){
+  const p = pointers.get(e.pointerId);
+  if(p && e.type === 'pointerup' && insp.mode && e.button === 0 && pointers.size === 1 &&
+     Math.hypot(e.clientX - p.x0, e.clientY - p.y0) < 5 && performance.now() - p.t0 < 450){
+    const rect = canvas.getBoundingClientRect();
+    inspectAt(e.clientX - rect.left, e.clientY - rect.top);
+  }
   pointers.delete(e.pointerId);
   if(pointers.size === 0){ dragMode = null; canvas.classList.remove('dragging'); }
   else if(pointers.size === 1) dragMode = 'orbit';
@@ -572,7 +715,7 @@ addEventListener('keydown', e => {
   const tag = document.activeElement && document.activeElement.tagName;
   const onRange = tag === 'INPUT';
   const k = e.key;
-  if(k === 'Escape'){ $('#info').hidden = true; return; }
+  if(k === 'Escape'){ $('#info').hidden = true; if(insp.mode) setInspectMode(false); return; }
   if(k === ' '){ e.preventDefault(); togglePlay(); return; }
   if(onRange && k.startsWith('Arrow')) return;
   if(k.startsWith('Arrow') || k === '+' || k === '=' || k === '-' || k === '_'){ keys.add(k); e.preventDefault(); return; }
@@ -587,6 +730,8 @@ addEventListener('keydown', e => {
     case '3': applyPreset('top'); break;
     case '4': applyPreset('close'); break;
     case 'g': P.guides = !P.guides; syncUI(); break;
+    case 'd': toggleProbe(); break;
+    case 't': setInspectMode(!insp.mode); break;
     case 'h': toggleHUD(); break;
     case 'c': togglePanel(); break;
     case 'i': $('#info').hidden = !$('#info').hidden; break;
@@ -706,6 +851,249 @@ function tickRecUI(){
 }
 
 /* ================================================================== */
+/* Ray inspector                                                       */
+/* ================================================================== */
+/* Re-traces the clicked pixel's ray on the CPU with the same equation as the
+   shader (finer step) and draws it in its own orbital plane. Null geodesics in
+   Schwarzschild are planar, and that plane always contains the camera and the
+   hole, so this 2D slice shows the complete path. */
+const insp = { mode: false, x: 0, y: 0, has: false, zoom: 'wide', res: null, timer: 0 };
+const B_CRIT = 1.5 * Math.sqrt(3);   // critical impact parameter, 3√3/2 r_s
+const dot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+
+function viewRay(px, py, rect, B){
+  const m = Math.min(rect.width, rect.height);
+  const ux = (px - rect.width / 2) / m - cam.shiftX, uy = (rect.height / 2 - py) / m - cam.shiftY;
+  const T = 2 * Math.tan(cam.fov * Math.PI / 360), M = B.m;
+  return norm([M[0] * ux * T + M[3] * uy * T + M[6], M[1] * ux * T + M[4] * uy * T + M[7], M[2] * ux * T + M[5] * uy * T + M[8]]);
+}
+/* world point -> CSS pixel on the page (plain pinhole, no lensing) */
+function project(p, rect, B){
+  const v = sub(p, B.pos), M = B.m;
+  const z = v[0] * M[6] + v[1] * M[7] + v[2] * M[8];
+  if(z < 0.05) return null;
+  const T = 2 * Math.tan(cam.fov * Math.PI / 360), m = Math.min(rect.width, rect.height);
+  const ux = (v[0] * M[0] + v[1] * M[1] + v[2] * M[2]) / (z * T) + cam.shiftX;
+  const uy = (v[0] * M[3] + v[1] * M[4] + v[2] * M[5]) / (z * T) + cam.shiftY;
+  return [rect.left + rect.width / 2 + ux * m, rect.top + rect.height / 2 - uy * m];
+}
+
+function traceRay(px, py){
+  const rect = canvas.getBoundingClientRect(), B = cameraBasis();
+  const d = viewRay(px, py, rect, B);
+  let pos = B.pos.slice(), vel = d.slice();
+  const hv = cross(pos, vel), b = Math.hypot(hv[0], hv[1], hv[2]);
+  const k = -1.5 * b * b * P.gravity;
+  const esc = Math.max(cam.dist * 1.05 + 2, P.diskOut * 1.4, 28);
+  const path = [pos.slice()], hits = [];
+  let outcome = 'lost', rMin = cam.dist, bend = 0;
+  const pl = lastPlanet, pr = P.planetSize * (pl ? Math.max(pl.stretch, 1) : 1);
+  for(let i = 0; i < 30000; i++){
+    const r = Math.hypot(pos[0], pos[1], pos[2]);
+    if(r < 1){ outcome = 'horizon'; break; }
+    if(r > esc && dot3(pos, vel) > 0){ outcome = 'escaped'; break; }
+    const dt = Math.max(0.008 * r, 0.002);
+    const acc = scl(pos, k / Math.pow(r, 5));
+    const np = add(add(pos, scl(vel, dt)), scl(acc, 0.5 * dt * dt));
+    const nr = Math.hypot(np[0], np[1], np[2]);
+    const nv = add(vel, scl(add(acc, scl(np, k / Math.pow(nr, 5))), 0.5 * dt));
+    bend += Math.acos(Math.min(1, Math.max(-1, dot3(vel, nv) / (Math.hypot(vel[0], vel[1], vel[2]) * Math.hypot(nv[0], nv[1], nv[2])))));
+    rMin = Math.min(rMin, nr);
+    if(pos[1] * np[1] < 0){
+      const t = pos[1] / (pos[1] - np[1]);
+      const hp = add(pos, scl(sub(np, pos), t)), rh = Math.hypot(hp[0], hp[2]);
+      hits.push({ p: hp, r: rh, inDisk: P.diskOn && rh >= P.diskIn * 0.9 && rh <= P.diskOut, order: hits.length + 1,
+                  far: dot3(hp, B.pos) < 0 });
+    }
+    if(P.planetOn && pl){
+      const seg = sub(np, pos), L2 = dot3(seg, seg);
+      const tt = Math.min(1, Math.max(0, dot3(sub(pl.p, pos), seg) / L2));
+      const c = add(pos, scl(seg, tt)), dc = sub(c, pl.p);
+      if(Math.hypot(dc[0], dc[1], dc[2]) < pr){ outcome = 'probe'; path.push(c); break; }
+    }
+    pos = np; vel = nv;
+    path.push(pos);
+  }
+  // basis of the ray's orbital plane
+  const e1 = norm(B.pos);
+  const n = b > 1e-6 ? scl(hv, 1 / b) : norm(cross(e1, Math.abs(e1[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0]));
+  const e2 = cross(n, e1);
+  const defl = Math.acos(Math.min(1, Math.max(-1, dot3(d, norm(vel))))) * 180 / Math.PI;
+  return { path, hits, outcome, b, rMin, bend, defl, n, e1, e2 };
+}
+
+/* ---- orbital-plane diagram ---- */
+function drawDiagram(R){
+  const W = 260, cx = 130, cy = 130;
+  const viewR = insp.zoom === 'near' ? 4.5 : Math.min(Math.max(cam.dist * 1.12, 5), 70);
+  const s = 118 / viewR;
+  const to2 = p => [cx - dot3(p, R.e1) * s, cy - dot3(p, R.e2) * s];
+  const f = v => v.toFixed(1);
+  const parts = [];
+  parts.push('<defs><clipPath id="rc"><rect x="0" y="0" width="260" height="260"/></clipPath></defs><g clip-path="url(#rc)">');
+  // range rings
+  const ringStep = viewR > 30 ? 10 : viewR > 12 ? 5 : 1;
+  for(let r = ringStep; r < viewR * 1.45; r += ringStep)
+    parts.push(`<circle cx="${cx}" cy="${cy}" r="${f(r * s)}" fill="none" stroke="rgba(233,230,223,.07)"/>`);
+  parts.push(`<path d="M${cx} 0V${W}M0 ${cy}H${W}" stroke="rgba(233,230,223,.06)"/>`);
+  // equatorial disk where it cuts this plane
+  if(P.diskOn){
+    const u = cross(R.n, [0, 1, 0]), ul = Math.hypot(u[0], u[1], u[2]);
+    if(ul < 1e-3){
+      parts.push(`<circle cx="${cx}" cy="${cy}" r="${f((P.diskIn + P.diskOut) / 2 * s)}" fill="none" stroke="rgba(255,179,107,.18)" stroke-width="${f((P.diskOut - P.diskIn) * s)}"/>`);
+    } else {
+      const ud = scl(u, 1 / ul);
+      for(const sg of [1, -1]){
+        const a = to2(scl(ud, sg * P.diskIn)), b = to2(scl(ud, sg * P.diskOut));
+        parts.push(`<path d="M${f(a[0])} ${f(a[1])}L${f(b[0])} ${f(b[1])}" stroke="rgba(255,179,107,.42)" stroke-width="4"/>`);
+      }
+    }
+  }
+  // ISCO, photon sphere, horizon
+  parts.push(`<circle cx="${cx}" cy="${cy}" r="${f(3 * s)}" fill="none" stroke="rgba(255,179,107,.28)" stroke-dasharray="1 3"/>`);
+  parts.push(`<circle cx="${cx}" cy="${cy}" r="${f(1.5 * s)}" fill="none" stroke="#7fd8ff" stroke-opacity=".75" stroke-dasharray="3 3"/>`);
+  parts.push(`<circle cx="${cx}" cy="${cy}" r="${f(Math.max(s, 1.5))}" fill="#000" stroke="rgba(233,230,223,.5)" stroke-width=".8"/>`);
+  // probe, if it lies near this plane
+  if(P.planetOn && lastPlanet && Math.abs(dot3(lastPlanet.p, R.n)) < 1.2){
+    const q = to2(lastPlanet.p);
+    parts.push(`<circle cx="${f(q[0])}" cy="${f(q[1])}" r="${f(Math.max(P.planetSize * s, 2))}" fill="none" stroke="rgba(233,230,223,.6)"/>`);
+  }
+  // the ray
+  const stride = Math.max(1, Math.floor(R.path.length / 1500));
+  let dstr = '';
+  for(let i = 0; i < R.path.length; i += stride){ const q = to2(R.path[i]); dstr += (i ? 'L' : 'M') + f(q[0]) + ' ' + f(q[1]); }
+  const qe = to2(R.path[R.path.length - 1]);
+  dstr += 'L' + f(qe[0]) + ' ' + f(qe[1]);
+  parts.push(`<path d="${dstr}" fill="none" stroke="#ffb36b" stroke-width="3" stroke-opacity=".18" stroke-linejoin="round"/>`);
+  parts.push(`<path d="${dstr}" fill="none" stroke="#ffb36b" stroke-width="1.2" stroke-linejoin="round"/>`);
+  // disk-plane crossings: filled = hit gas, hollow = passed through empty plane
+  for(const h of R.hits){
+    const q = to2(h.p);
+    parts.push(h.inDisk
+      ? `<circle cx="${f(q[0])}" cy="${f(q[1])}" r="3.2" fill="#ffb36b"/><text x="${f(q[0] + 6)}" y="${f(q[1] - 5)}" fill="#ffb36b" font-size="8">${h.order}</text>`
+      : `<circle cx="${f(q[0])}" cy="${f(q[1])}" r="2.6" fill="none" stroke="rgba(233,230,223,.45)"/>`);
+  }
+  // end marker
+  if(R.outcome === 'horizon') parts.push(`<path d="M${f(qe[0] - 3)} ${f(qe[1] - 3)}l6 6m0-6l-6 6" stroke="#ff5b4f" stroke-width="1.3"/>`);
+  else if(R.outcome === 'escaped'){
+    const pa = to2(R.path[Math.max(0, R.path.length - 1 - 3 * stride)]);
+    const ang = Math.atan2(qe[1] - pa[1], qe[0] - pa[0]) * 180 / Math.PI;
+    parts.push(`<path d="M0 0l-7 -3.5v7z" fill="#ffb36b" transform="translate(${f(qe[0])} ${f(qe[1])}) rotate(${ang.toFixed(1)})"/>`);
+  }
+  // camera
+  const c0 = to2(R.path[0]);
+  const camIn = c0[0] >= 0 && c0[0] <= W && c0[1] >= 0 && c0[1] <= W;
+  parts.push(`<rect x="${f(c0[0] - 3)}" y="${f(c0[1] - 3)}" width="6" height="6" fill="#0b0c10" stroke="#e9e6df"/></g>`);
+  parts.push(`<g font-size="8" letter-spacing="1.6" fill="rgba(233,230,223,.4)" font-family="JetBrains Mono, monospace">
+    <text x="10" y="16">ORBITAL PLANE</text><text x="250" y="16" text-anchor="end">⌀ ${(viewR * 2).toFixed(viewR < 10 ? 1 : 0)} rₛ</text>
+    ${camIn ? `<text x="${f(c0[0] + 7)}" y="${f(c0[1] + 12)}">CAM</text>` : '<text x="10" y="250">CAMERA OFF-SCALE · WIDE TO SEE</text>'}
+  </g>`);
+  $('#raySvg').innerHTML = parts.join('');
+}
+
+function describe(R){
+  const first = R.hits.find(h => h.inDisk);
+  const near = Math.abs(R.b - B_CRIT) < 0.06 && P.gravity > 0.99;
+  const ord = n => ['primary', 'secondary', 'tertiary'][n - 1] || n + 'th-order';
+  let txt;
+  if(first){
+    txt = `Shows the <b>${ord(first.order)} image</b> of the disk, at r = ${first.r.toFixed(2)} rₛ. `;
+    if(first.order === 1 && first.far) txt += 'That gas is on the far side of the hole: gravity bent the ray over the shadow to reach it. ';
+    else if(first.order === 1) txt += 'That gas is on the near side, seen almost directly. ';
+    else if(first.order === 2) txt += 'The ray had already crossed the disk plane once, through the empty gap, so this image is flipped and squeezed. ';
+    else if(first.order >= 3) txt += 'Light this deep circled the hole before escaping. Images like this stack up into the thin photon ring. ';
+    if(R.outcome === 'horizon') txt += 'The rest of the ray falls into the horizon.';
+    else if(first.order === 1) txt += 'The disk is translucent, so later crossings add a little light.';
+  } else if(R.outcome === 'probe'){
+    txt = 'Hits the <b>probe</b>. Its light reaches you shifted by g = ' + (lastPlanet ? lastPlanet.g.toFixed(3) : '—') + '.';
+  } else if(R.outcome === 'horizon'){
+    txt = R.b < 0.3
+      ? '<b>Shadow.</b> Aimed almost straight at the hole, the ray falls in radially. No light can come from this direction.'
+      : `<b>Shadow.</b> The impact parameter b = ${R.b.toFixed(2)} rₛ is below b꜀ ≈ ${B_CRIT.toFixed(2)} rₛ, so the ray spirals through the photon sphere and crosses the horizon. No light can come from this direction.`;
+  } else if(R.outcome === 'escaped'){
+    txt = `<b>Background sky</b>, bent by ${R.defl.toFixed(1)}°. `;
+    if(R.defl > 150) txt += 'The ray turned almost all the way back: the star you see here is roughly behind you.';
+    else if(R.defl > 30) txt += 'This is strong lensing: the star is far from where it appears.';
+    else txt += 'Far from the hole the bending is small (weak lensing).';
+  } else {
+    txt = 'The ray is still orbiting after the step budget. It is trapped near the photon sphere.';
+  }
+  if(near) txt += ` <b>Grazing the photon sphere:</b> b is within ${Math.abs(R.b - B_CRIT).toFixed(3)} rₛ of b꜀, so a tiny change of aim sends it around many more times.`;
+  if(P.gravity < 1) txt += ` Light bending is at ${Math.round(P.gravity * 100)}%.`;
+  return txt;
+}
+
+function updateInspectorPanel(R){
+  drawDiagram(R);
+  const out = { horizon: 'CAPTURED · HORIZON', escaped: 'ESCAPED · SKY', probe: 'HIT · PROBE', lost: 'TRAPPED' }[R.outcome];
+  const inDisk = R.hits.filter(h => h.inDisk);
+  const rows = [
+    ['OUTCOME', out, R.outcome !== 'escaped'],
+    ['IMPACT b', R.b.toFixed(3) + ' rₛ', Math.abs(R.b - B_CRIT) < 0.06],
+    ['CRITICAL b꜀', B_CRIT.toFixed(3) + ' rₛ'],
+    ['CLOSEST r', R.rMin.toFixed(3) + ' rₛ'],
+    ['TOTAL BEND', (R.bend * 180 / Math.PI).toFixed(1) + '°' + (R.bend > Math.PI ? ' · ' + (R.bend / (2 * Math.PI)).toFixed(2) + ' turns' : '')],
+    ['NET DEFLECTION', R.outcome === 'escaped' ? R.defl.toFixed(2) + '°' : '—'],
+    ['DISK HITS', inDisk.length ? inDisk.slice(0, 3).map(h => '#' + h.order + ' r ' + h.r.toFixed(1)).join(' · ') : 'NONE', inDisk.length > 0],
+    ['STEPS', String(R.path.length)],
+  ];
+  $('#rayStats').innerHTML = rows.map(([k, v, hl]) => `<dt>${k}</dt><dd${hl ? ' class="hl"' : ''}>${v}</dd>`).join('');
+  $('#rayNote').innerHTML = describe(R);
+}
+
+function inspectAt(px, py){
+  insp.x = px; insp.y = py; insp.has = true;
+  insp.res = traceRay(px, py);
+  updateInspectorPanel(insp.res);
+}
+function setInspectMode(on){
+  insp.mode = on;
+  if(!on) insp.has = false;
+  canvas.classList.toggle('inspect', on);
+  $('#btnRay').classList.toggle('on', on);
+  $('#inspector').hidden = !on;
+  $('#hud').classList.toggle('inspecting', on);
+  if(on && !insp.has){
+    $('#raySvg').innerHTML = `<g font-family="JetBrains Mono, monospace" fill="rgba(233,230,223,.45)" font-size="9" letter-spacing="1.8" text-anchor="middle">
+      <circle cx="130" cy="122" r="22" fill="none" stroke="rgba(255,179,107,.5)" stroke-dasharray="2 4"/>
+      <path d="M130 92v14M130 138v14M100 122h14M146 122h14" stroke="rgba(255,179,107,.8)"/>
+      <text x="130" y="186">CLICK ANY PIXEL</text><text x="130" y="200">TO TRACE ITS LIGHT RAY</text></g>`;
+    $('#rayStats').innerHTML = '';
+    $('#rayNote').innerHTML = 'Each pixel is light arriving from one direction. Click a point to follow that ray backwards: whether it hit the disk, the probe or the sky, or fell into the horizon.';
+  }
+}
+$('#btnRay').onclick = () => setInspectMode(!insp.mode);
+$('#inspClose').onclick = () => setInspectMode(false);
+document.querySelectorAll('#inspector [data-zoom]').forEach(b => b.onclick = () => {
+  insp.zoom = b.dataset.zoom;
+  document.querySelectorAll('#inspector [data-zoom]').forEach(x => x.classList.toggle('on', x === b));
+  if(insp.res) drawDiagram(insp.res);
+});
+
+/* per frame: re-trace (camera and time may change), refresh the panel at ~12 Hz, place markers */
+function updateMarkers(dt){
+  const hudHidden = $('#hud').classList.contains('hidden');
+  const rect = canvas.getBoundingClientRect();
+  const rm = $('#rayMark'), pm = $('#probeMark');
+
+  // probe locator at its true (unlensed) position while it falls
+  const pq = !hudHidden && P.planetOn && lastPlanet && lastPlanet.st ? project(lastPlanet.p, rect, cameraBasis()) : null;
+  pm.classList.toggle('on', !!pq);
+  if(pq){ pm.style.left = pq[0] + 'px'; pm.style.top = pq[1] + 'px'; pm.querySelector('span').textContent = 'PROBE · TRUE POSITION · g ' + lastPlanet.g.toFixed(2); }
+
+  const active = insp.mode && insp.has && !hudHidden;
+  rm.classList.toggle('on', active);
+  if(!active) return;
+  rm.style.left = rect.left + insp.x + 'px'; rm.style.top = rect.top + insp.y + 'px';
+  insp.timer -= dt;
+  if(insp.timer <= 0){
+    insp.timer = 0.08;
+    insp.res = traceRay(insp.x, insp.y);
+    updateInspectorPanel(insp.res);
+  }
+}
+
+/* ================================================================== */
 /* Main loop                                                           */
 /* ================================================================== */
 let last = performance.now();
@@ -735,6 +1123,7 @@ function frame(now){
 
   render();
   if(snapPending){ snapPending = false; doSnapshot(); }
+  updateMarkers(dt);
   updateTelemetry(dt);
   tickRecUI();
   requestAnimationFrame(frame);
@@ -758,6 +1147,9 @@ window.EventHorizon = {
   preset: applyPreset,
   snapCamera(){ clampGoal(); Object.assign(cam, goal); },
   togglePanel, toggleHUD, snapshot, toggleRecording,
+  releaseProbe, resetProbe,
+  inspect(x, y){ if(!insp.mode) setInspectMode(true); inspectAt(x, y); return insp.res; },
+  closeInspector(){ setInspectMode(false); },
 };
 
 requestAnimationFrame(frame);
