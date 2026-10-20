@@ -246,6 +246,13 @@ input[type=range]::-moz-range-thumb{width:8px;height:8px;border-radius:0;backgro
 .an-head{border-bottom:1px solid var(--line)}
 .an-foot{border-top:1px solid var(--line)}
 .an-fig{color:var(--accent)}
+.an-tabs{display:flex;border:1px solid var(--line2)}
+.an-tabs button{padding:6px 10px;font-size:8.5px;letter-spacing:.16em;color:var(--dim);white-space:nowrap}
+.an-tabs button+button{border-left:1px solid var(--line)}
+.an-tabs button:hover{color:var(--fg)}
+.an-tabs button.on{color:var(--accent);background:var(--accent-bg)}
+.an-tabs button:focus{outline:none}
+.an-tabs button:focus-visible{outline:1px solid var(--accent-dim);outline-offset:-1px}
 .an-title{flex:1;text-align:right;color:var(--fg)}
 .an-close{width:24px;height:24px;color:var(--dim);font-size:15px}
 .an-close:hover{color:var(--accent)}
@@ -259,10 +266,20 @@ input[type=range]::-moz-range-thumb{width:8px;height:8px;border-radius:0;backgro
 .an-legend .k-ring{width:14px;height:6px;background:linear-gradient(90deg,#4f3a28,#282c35);border:1px solid rgba(233,230,223,.4)}
 .an-legend .k-cyan{width:14px;height:0;border-top:1px solid #7fd8ff}
 .an-legend .k-well{width:12px;height:6px;background:#0b0c10;border:1px solid rgba(233,230,223,.3)}
+.an-legend .k-ball{width:9px;height:9px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#2c313a,#020203);border:1px solid rgba(233,230,223,.6)}
+.an-legend .k-dim{width:14px;height:6px;background:#5a3550;border:1px solid rgba(233,230,223,.3)}
+.an-legend .k-glass{width:14px;height:8px;background:linear-gradient(90deg,#2c323d,#7d8798);border:1px solid rgba(127,216,255,.5)}
+.an-legend .k-stars{width:14px;height:8px;background:#30353f radial-gradient(circle,#eee 0 1px,transparent 1.5px) 0 0/5px 4px;border:1px solid rgba(233,230,223,.3)}
+.an-legend .k-violet{width:14px;height:8px;background:#2e2a3b;border:1px solid #b07ad8}
 .an-legend .k-vane{width:4px;height:10px;background:#383d48;border:1px solid rgba(233,230,223,.5)}
 .an-caption{width:min(1080px,100%);font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:12.5px;line-height:1.6;color:rgba(233,230,223,.7)}
+@media (max-width:900px){
+  .an-head{flex-wrap:wrap}
+  .an-tabs{order:3;width:100%;overflow-x:auto}
+}
 @media (max-width:640px){
   .an-head,.an-foot{flex-direction:column;align-items:flex-start;gap:6px}
   .an-title,.an-readout{text-align:left}
+  .an-tabs .tab-name{display:none}
   #btnAnatomy{padding:0 9px;font-size:0;gap:0}
 }

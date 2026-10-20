@@ -282,6 +282,27 @@ The **Anatomy** view explains the hole as a physical instrument rather than a pi
 
 Drag sideways or press ← → to change the spin; the WebGL renderer pauses while the figure is open.
 
+Three more figures cover the other scenes (tabs or keys 1–4; the view opens on the scene you are in):
+
+<table>
+  <tr>
+    <td width="33%"><img src="docs/media/anatomy-binary.jpg" alt="Anatomy of a binary black hole: orrery, wave plate and chirp recorder" width="100%"></td>
+    <td width="33%"><img src="docs/media/anatomy-jets.jpg" alt="Anatomy of a relativistic jet: hole in a test stand with jets and field coils" width="100%"></td>
+    <td width="33%"><img src="docs/media/anatomy-wormhole.jpg" alt="Anatomy of a wormhole: the embedding funnel joining two universes" width="100%"></td>
+  </tr>
+  <tr>
+    <td><sub><code>FIG. 2</code> &nbsp;ORRERY · WAVE PLATE · CHIRP CHART</sub></td>
+    <td><sub><code>FIG. 3</code> &nbsp;JETS · FIELD COILS · DOPPLER</sub></td>
+    <td><sub><code>FIG. 4</code> &nbsp;EMBEDDING FUNNEL · TWO UNIVERSES</sub></td>
+  </tr>
+</table>
+
+| Figure | The instrument | Driven by | Drag to |
+|:--|:--|:--|:--|
+| **2 · Binary** | A two-ball orrery on a telescoping arm over a plate engraved with the wave crests; a strip chart records h ∝ (aΩ)² cos 2ψ; a crank turns with time | The Peters inspiral, merger and ringdown | Scrub time |
+| **3 · Jets** | The hole in a test stand, disk on brackets; collars stream out at βc inside helical field coils; γ and power dials | γ, β, Doppler factors D = 1/γ(1 ∓ β cos 54.7°) for the drawing's own view, P ∝ a² | Set γ |
+| **4 · Wormhole** | The exact Ellis embedding, z = b₀ asinh(ℓ/b₀), r = √(b₀² + ℓ²), as a glass funnel between two plates: our universe above, the other below | The throat b₀ and the camera's ℓ | Move the traveller (and the camera) through the throat |
+
 ## `03` &nbsp;INTERFACE
 
 <p align="center">
