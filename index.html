@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Event Horizon</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<canvas id="gl"></canvas>
+
+<div id="hud">
+  <div class="frame" aria-hidden="true"><i class="c tl"></i><i class="c tr"></i><i class="c bl"></i><i class="c br"></i></div>
+
+  <header id="brand">
+    <div class="brand-row">
+      <span class="pulse"></span>
+      <span class="brand-name">EVENT HORIZON</span>
+      <span class="brand-sub">SCHWARZSCHILD / RAY-TRACED</span>
+    </div>
+    <dl id="telemetry"></dl>
+  </header>
+
+  <nav id="actions">
+    <button class="icon-btn" id="btnInfo" title="About the physics (I)">?</button>
+    <button class="icon-btn" id="btnFull" title="Fullscreen (F)">
+      <svg viewBox="0 0 16 16"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"/></svg>
+    </button>
+    <button class="icon-btn" id="btnHide" title="Hide interface (H)">
+      <svg viewBox="0 0 16 16"><path d="M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/></svg>
+    </button>
+    <button class="text-btn" id="btnPanel" title="Toggle controls (C)"><span class="bars"></span>CONTROLS</button>
+  </nav>
+
+  <aside id="panel">
+    <div class="panel-head"><span>CONTROL MATRIX</span><span class="faint" id="panelMeta">GL2</span></div>
+    <div id="sections"></div>
+  </aside>
+
+  <div id="legend">
+    <div><i style="background:var(--cyan)"></i>PHOTON SPHERE · 1.5 r<sub>s</sub></div>
+    <div><i style="background:var(--accent)"></i>ISCO · 3.0 r<sub>s</sub></div>
+    <div><i style="background:rgba(200,215,230,.5)"></i>GRID · 1 r<sub>s</sub> / 30°</div>
+  </div>
+
+  <div id="hints">DRAG ORBIT · SHIFT/RMB PAN · WHEEL ZOOM · SPACE PAUSE · H HIDE UI</div>
+
+  <footer id="timeline">
+    <button class="tl-btn" data-act="reset" title="Reset time (0)"><svg viewBox="0 0 16 16"><path d="M3 3v4h4"/><path d="M3.5 7A5 5 0 1 1 4 11"/></svg></button>
+    <button class="tl-btn" data-act="slower" title="Slower / reverse ([)"><svg viewBox="0 0 16 16"><path d="M8 4L4 8l4 4M13 4L9 8l4 4"/></svg></button>
+    <button class="tl-btn primary" data-act="play" title="Play / pause (Space)">
+      <svg class="i-play" viewBox="0 0 16 16"><path d="M5 3.5l7 4.5-7 4.5z"/></svg>
+      <svg class="i-pause" viewBox="0 0 16 16"><path d="M5.5 3.5v9M10.5 3.5v9"/></svg>
+    </button>
+    <button class="tl-btn" data-act="faster" title="Faster (])"><svg viewBox="0 0 16 16"><path d="M8 4l4 4-4 4M3 4l4 4-4 4"/></svg></button>
+    <button class="tl-btn" data-act="step" title="Step one r_s/c (.)"><svg viewBox="0 0 16 16"><path d="M4 3.5l6 4.5-6 4.5zM12.5 3.5v9"/></svg></button>
+    <span class="tl-sep"></span>
+    <div class="tl-read"><span class="k">RATE</span><span id="tlRate">×1.00</span></div>
+    <div class="tl-read"><span class="k">T</span><span id="tlTime">0.0</span><span class="u">r<sub>s</sub>/c</span></div>
+    <div class="tl-read wide"><span class="k">≈</span><span id="tlPhys">0 s</span></div>
+    <span class="tl-sep"></span>
+    <div class="tl-orbit" title="Orbital phase of the probe">
+      <span class="k">ORBIT</span>
+      <div class="tl-bar"><div id="tlPhase"></div></div>
+    </div>
+  </footer>
+
+  <div id="rec"><span class="rec-dot"></span><span id="recText">REC 00:00</span></div>
+  <div id="toast"></div>
+
+  <div id="info" class="modal" hidden>
+    <div class="modal-card">
+      <div class="modal-head"><span>FIELD NOTES</span><button class="icon-btn" id="infoClose" title="Close">×</button></div>
+      <div class="modal-body">
+        <p class="lead">Every pixel is a light ray traced backwards from the camera through curved spacetime around a non-rotating (Schwarzschild) black hole. Distances are in Schwarzschild radii r<sub>s</sub> = 2GM/c², time in r<sub>s</sub>/c.</p>
+        <h4><span>01</span>Event horizon · r = 1 r<sub>s</sub></h4>
+        <p>The surface of no return. Rays that cross it never reach the camera, so it renders as pure black. The dark “shadow” you see is larger, about 2.6 r<sub>s</sub> across in radius, because light is captured well before it reaches the horizon.</p>
+        <h4><span>02</span>Photon sphere · 1.5 r<sub>s</sub></h4>
+        <p>Here gravity is strong enough for light to orbit in a circle. Rays that skim it wrap around the hole and pile up into the thin bright <em>photon ring</em> at the edge of the shadow.</p>
+        <h4><span>03</span>Gravitational lensing</h4>
+        <p>The far side of the disk is bent up and over the shadow, forming the arching halo. Fainter, thinner copies appear closer in; each is light that circled the hole one more time. Set <em>Lensing</em> to 0% to see the same scene with gravity switched off for light.</p>
+        <h4><span>04</span>Accretion disk & ISCO · 3 r<sub>s</sub></h4>
+        <p>Gas orbits at the Keplerian rate Ω = √(GM/r³), so the inner disk spins faster. Inside the innermost stable circular orbit (ISCO) no stable orbit exists and gas plunges in, so the disk has an inner edge.</p>
+        <h4><span>05</span>Doppler beaming</h4>
+        <p>Gas near the ISCO moves at about half the speed of light. The side moving toward you looks brighter and bluer (intensity ∝ g⁴), the receding side dimmer and redder. Try the <em>Blackbody</em> palette at 100% Doppler.</p>
+        <h4><span>06</span>Gravitational redshift & time dilation</h4>
+        <p>Light climbing out of the well loses energy by √(1 − r<sub>s</sub>/r). Clocks near the hole run slow by the same factor. The telemetry shows your camera's clock rate and the orbiting probe's (√(1 − 1.5 r<sub>s</sub>/r) for a circular orbit).</p>
+        <h4><span>07</span>Mass scale</h4>
+        <p>Everything scales with mass. The picture is identical for a 10 M☉ black hole and M87*, but one r<sub>s</sub>/c is 0.1 ms for the first and 18 hours for the second.</p>
+        <h4><span>08</span>Keys</h4>
+        <p class="keys"><b>Drag</b> orbit · <b>Shift/RMB drag</b> pan · <b>Wheel</b> zoom · <b>←↑→↓</b> orbit · <b>Space</b> play/pause · <b>[ ]</b> rate · <b>.</b> step · <b>0</b> reset time · <b>1–4</b> camera presets · <b>G</b> guides · <b>P</b> snapshot · <b>R</b> record · <b>H</b> hide UI · <b>F</b> fullscreen</p>
+      </div>
+    </div>
+  </div>
+
+  <div id="fatal" hidden>WEBGL2 NOT AVAILABLE<br><span>This simulation needs a browser with WebGL 2 support.</span></div>
+</div>
+
+<script src="js/shaders.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
