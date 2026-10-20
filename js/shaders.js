@@ -53,6 +53,8 @@ uniform float uRCapture;    // rays inside this Boyer-Lindquist r are absorbed (
 uniform float uPhPro;       // prograde / retrograde circular photon orbits (equatorial)
 uniform float uPhRetro;
 uniform float uIsco;
+uniform float uThick;       // disk scale height H/R; 0 = infinitely thin sheet
+uniform float uHaze;        // weight of the broad, optically thin envelope
 
 uniform vec3  uObsBeta;     // observer velocity relative to a local static observer (units of c)
 uniform float uObsBeam;     // apply observer Doppler beaming to the image
@@ -118,42 +120,65 @@ float diskLayer(float r, float ang, float seed){
   return n * 0.78 + s * 0.22;
 }
 
-/* Emission (premultiplied rgb) + opacity of the thin disk at Boyer-Lindquist
-   radius r, azimuth phi. d is the (backward) ray direction in scene space,
-   b the photon's axial angular momentum p_phi, camE its energy measured by
-   the camera's zero-angular-momentum frame. */
-vec4 diskSample(float r, float phi, vec3 d, float b, float camE){
-  if(r < uDiskIn * 0.8 || r > uDiskOut) return vec4(0.0);
-  float x = (r - uDiskIn) / (uDiskOut - uDiskIn);
+float fbm3(vec3 p){
+  float s = 0.0, a = 0.5;
+  for(int i = 0; i < 3; i++){
+    s += a * vnoise(p);
+    p = p * 2.03 + vec3(3.1, 1.7, 5.3);
+    a *= 0.5;
+  }
+  return s / 0.875;
+}
+/* cheaper turbulence for the volume, with a vertical coordinate zn = z/H */
+float diskLayerV(float r, float ang, float zn, float seed){
+  vec3 q = vec3(cos(ang) * 2.2, sin(ang) * 2.2, r * 2.4 + seed + zn * 0.9);
+  return fbm3(q + seed);
+}
 
-  float inner = smoothstep(uDiskIn * 0.82, uDiskIn * 1.06, r);
+/* Source function S (rgb) of disk gas at Boyer-Lindquist radius r and azimuth
+   phi, and its column density (out dens). zn = z/H is the height in scale
+   heights (volume only). b is the photon's axial angular momentum p_phi, camE
+   its energy in the camera's zero-angular-momentum frame. */
+vec3 diskSource(float r, float phi, float zn, float b, float camE, bool thick, out float dens){
+  dens = 0.0;
+  float rIn = uDiskIn;
+  if(r > uDiskOut || (!thick && r < rIn * 0.8) || (thick && r < uRCapture)) return vec3(0.0);
+  float x = (r - rIn) / (uDiskOut - rIn);
   float outer = 1.0 - smoothstep(0.3, 1.0, x);
+  /* thin: sharp edge at the ISCO. thick: gas keeps glowing, fainter, as it plunges in */
+  float inner = thick ? (r >= rIn ? 1.0 : 0.6 * smoothstep(uRCapture, rIn, r))
+                      : smoothstep(rIn * 0.82, rIn * 1.06, r);
 
   /* Kerr circular orbit, sense s = uSpin relative to the hole's rotation:
-     Ω = s√M / (r^{3/2} + s a√M) */
-  float M = uDiskM, a = uDiskA, sqM = sqrt(M), r15 = r * sqrt(r);
+     Ω = s√M / (r^{3/2} + s a√M). Plunging gas keeps the ISCO's orbit (approx.) */
+  float rk = max(r, thick ? rIn : r);
+  float M = uDiskM, a = uDiskA, sqM = sqrt(M), r15 = rk * sqrt(rk);
   float omega = uSpin * sqM / (r15 + uSpin * a * sqM);
 
   /* flow-map style: two phase-shifted layers so differential shear never winds up */
   const float P = 140.0;
   float t1 = mod(uTime, P), t2 = mod(uTime + 0.5 * P, P);
   float w1 = 1.0 - abs(2.0 * t1 / P - 1.0);
-  float n = diskLayer(r, phi - omega * t1, 0.0) * w1 + diskLayer(r, phi - omega * t2, 7.31) * (1.0 - w1);
+  float n = thick
+    ? diskLayerV(r, phi - omega * t1, zn, 0.0) * w1 + diskLayerV(r, phi - omega * t2, zn, 7.31) * (1.0 - w1)
+    : diskLayer(r, phi - omega * t1, 0.0) * w1 + diskLayer(r, phi - omega * t2, 7.31) * (1.0 - w1);
   n = (n - 0.5) / sqrt(w1 * w1 + (1.0 - w1) * (1.0 - w1)) + 0.5;
 
   float tex = smoothstep(0.18, 0.82, n);
-  float dens = inner * outer * mix(1.0, tex * 1.7 + 0.04, uTurb);
+  dens = inner * outer * mix(1.0, tex * 1.7 + 0.04, uTurb);
+  /* hot, puffy flows are compact: most of the gas sits close to the hole */
+  if(thick) dens *= pow(rIn / max(r, rIn), 1.5);
 
   /* Novikov-Thorne-like temperature profile, normalised to peak = 1 */
-  float rr = max(r / uDiskIn, 1.0001);
+  float rr = max(r / rIn, 1.0001);
   float f = pow(rr, -0.75) * pow(1.0 - sqrt(1.0 / rr), 0.25) / 0.488;
-  f = max(f, 0.18 * inner);
+  f = r < rIn ? 0.55 : max(f, 0.18 * inner);
 
   /* Exact frequency ratio g = E_camera / E_emitted, split into
        gravity + frame dragging (camera ZAMO vs. emitter ZAMO) and
        Doppler (emitter ZAMO vs. orbiting gas), so each can be dialled. */
-  float rad = r15 - 3.0 * M * sqrt(r) + 2.0 * uSpin * a * sqM;
-  float ut = (r15 + uSpin * a * sqM) / (pow(r, 0.75) * sqrt(max(rad, 0.02 * r15)));
+  float rad = r15 - 3.0 * M * sqrt(rk) + 2.0 * uSpin * a * sqM;
+  float ut = (r15 + uSpin * a * sqM) / (pow(rk, 0.75) * sqrt(max(rad, 0.02 * r15)));
   float Eem = ut * (1.0 - omega * b);
   float Dl = r * r - 2.0 * M * r + a * a;
   float S2 = (r * r + a * a) * (r * r + a * a) - a * a * Dl;
@@ -162,11 +187,37 @@ vec4 diskSample(float r, float phi, vec3 d, float b, float camE){
   float g = clamp(mix(1.0, camE / Ezamo, uRedshift) * pow(max(Ezamo / Eem, 1e-3), uDoppler), 0.0, 12.0);
   float g4 = g * g * g * g;
 
-  float alpha = 1.0 - exp(-dens * uDiskOpacity / max(abs(d.y), 0.06));
   vec3 hue = uPalette > 0.5 ? blackbody(uDiskTemp * f * g) : cineRamp(f * g);
   float streak = mix(1.0, 0.3 + 1.2 * tex, uTurb);
-  float I = uDiskBright * (0.15 + f * f) * g4 * 2.2 * streak;
-  return vec4(hue * I * alpha, alpha);
+  return hue * uDiskBright * (0.15 + f * f) * g4 * 2.2 * streak;
+}
+
+/* Thin sheet: emission (premultiplied rgb) + opacity at the equatorial crossing.
+   d is the (backward) ray direction in scene space. */
+vec4 diskSample(float r, float phi, vec3 d, float b, float camE){
+  float dens;
+  vec3 S = diskSource(r, phi, 0.0, b, camE, false, dens);
+  float alpha = 1.0 - exp(-dens * uDiskOpacity / max(abs(d.y), 0.06));
+  return vec4(S * alpha, alpha);
+}
+
+/* Thick flow: scale height H = uThick · R. Vertical profile is a Gaussian
+   (plus an optional envelope 2× wider), normalised so a vertical column has
+   the same emission depth as the thin sheet. The gas is hot and mostly
+   optically thin: it absorbs only a fraction (THICK_ABSORB) of what it emits,
+   so the shadow shows through the glow. Returns emission and absorption for
+   a path element ds at (r, θ, φ). */
+const float THICK_ABSORB = 0.3;
+vec4 diskVolume(float r, float th, float ph, float ds, float b, float camE){
+  float Rc = sqrt(r * r + uA * uA) * sin(th), z = r * cos(th);
+  float H = uThick * max(Rc, uDiskIn * 0.6);
+  float zn = z / H;
+  float v = exp(-0.5 * zn * zn) + uHaze * 0.5 * exp(-0.125 * zn * zn);
+  if(v < 1e-3) return vec4(0.0);
+  float dens;
+  vec3 S = diskSource(r, ph, zn, b, camE, true, dens);
+  float dtau = uDiskOpacity * dens * v * ds / (2.5066 * H * (1.0 + uHaze));
+  return vec4(S * (1.0 - exp(-dtau)), 1.0 - exp(-dtau * THICK_ABSORB));
 }
 
 /* Equatorial reference grid: 1 r_s rings, 30° spokes, photon orbits, ISCO */
@@ -370,8 +421,16 @@ void main(){
   bool captured = false, escaped = false;
   vec3 cPrev = blToCart(X.x, X.y, X.z), dirOut = rd;
 
-  for(int i = 0; i < 1200; i++){
-    if(i >= uMaxSteps) break;
+  bool thick = uThick > 0.001 && uDiskOn > 0.5;
+  /* per-pixel offset of the volume samples along each step (interleaved gradient
+     noise): turns banding into a fine, even grain */
+  float jitter = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+  /* rays crossing the gas, or passing near the spin axis, need many short
+     steps; the extra budget is only spent by rays that need it */
+  int budget = uMaxSteps * (thick ? 3 : 1) + 256;
+
+  for(int i = 0; i < 3600; i++){
+    if(i >= budget) break;
     if(X.x < uRCapture){ captured = true; break; }
 
     vec3 X0 = X;
@@ -381,7 +440,20 @@ void main(){
     float rdot = (X.x * X.x - 2.0 * M * X.x + a2) / (X.x * X.x + a2 * cos(X.y) * cos(X.y)) * Pm.x;
     float h = min(clamp(uStepK * 1.6 * X.x, 0.004, 4.0),
                   0.25 * max(X.x - uRCapture + 0.02, 1e-4) / max(abs(rdot), 1e-6));
-    h *= -clamp(sin(X.y) * 5.0, 0.005, 1.0);
+    if(thick){
+      /* inside (or near) the gas, step a fraction of a scale height */
+      float Rc = sqrt(X.x * X.x + a2) * sin(X.y), zc = X.x * cos(X.y);
+      float Hc = uThick * max(Rc, uDiskIn * 0.6);
+      if(Rc < uDiskOut * 1.1 && abs(zc) < Hc * (3.5 + uHaze * 4.0)) h = min(h, max(0.4 * Hc, 0.006));
+    }
+    if(b != 0.0){
+      /* near the spin axis the θ equation stiffens (b²/sin³θ): limit the angular
+         change per step to a fraction of sinθ, whatever the quality setting */
+      float snA = max(sin(X.y), 1e-4);
+      float w = sqrt(Pm.y * Pm.y + b * b / (snA * snA));
+      h = min(h, 0.3 * snA * (X.x * X.x + a2 * cos(X.y) * cos(X.y)) / max(w, 1e-6));
+    }
+    h = -h;
     kerrStep(X, Pm, b, q, h);
     if(!(X.x > 0.0) || !(abs(Pm.x) < 1e8) || !(abs(Pm.y) < 1e8) || !(abs(X.z) < 1e6)){ captured = true; break; }
     vec3 c1 = blToCart(X.x, X.y, X.z);
@@ -407,8 +479,18 @@ void main(){
     if(tDisk <= 1.0 && tDisk < tPlan){
       float rh = mix(X0.x, X.x, tDisk), ph = mix(X0.z, X.z, tDisk);
       if(uGuides > 0.5) col += (1.0 - alpha * 0.8) * guides(rh, ph, rCam);
-      if(uDiskOn > 0.5){
+      if(uDiskOn > 0.5 && !thick){
         vec4 sm = diskSample(rh, ph, dirOut, b, camE);
+        col += (1.0 - alpha) * sm.rgb;
+        alpha += (1.0 - alpha) * sm.a;
+      }
+    }
+    if(thick){
+      /* two stratified samples per step, each covering half of it */
+      float span = min(1.0, tPlan), dsh = 0.5 * length(seg) * span;
+      for(int k = 0; k < 2; k++){
+        float ts = (float(k) + jitter) * 0.5 * span;
+        vec4 sm = diskVolume(mix(X0.x, X.x, ts), mix(X0.y, X.y, ts), mix(X0.z, X.z, ts), dsh, b, camE);
         col += (1.0 - alpha) * sm.rgb;
         alpha += (1.0 - alpha) * sm.a;
       }

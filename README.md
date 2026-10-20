@@ -35,6 +35,8 @@ Then open **http://localhost:5179**. Opening `index.html` directly also works. A
 
 ## `01` &nbsp;OBSERVATIONS
 
+<sub>Rendered with the thin-sheet disk model, which shows the lensing most clearly.</sub>
+
 <table>
   <tr>
     <td width="50%"><img src="docs/media/disk-flow.gif" alt="Accretion disk rotating over time" width="100%"></td>
@@ -84,6 +86,26 @@ Then open **http://localhost:5179**. Opening `index.html` directly also works. A
 <br>
 
 ## `02` &nbsp;EXPERIMENTS
+
+### Thicken the disk &nbsp;<sub><code>DISK MODEL</code></sub>
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/media/disk-thin.jpg" alt="Thin-sheet disk" width="100%"></td>
+    <td width="50%"><img src="docs/media/disk-thick.jpg" alt="Thick volumetric disk: a glowing, hazy torus" width="100%"></td>
+  </tr>
+  <tr>
+    <td><sub><code>THIN SHEET</code> &nbsp;ZERO THICKNESS · CRISP LENSED IMAGES</sub></td>
+    <td><sub><code>THICK · H/R 0.10</code> &nbsp;GLOWING GAS · HAZE · PARTLY TRANSPARENT</sub></td>
+  </tr>
+</table>
+
+<p align="center">
+  <img src="docs/media/eht-view.jpg" alt="Nearly face-on view of a thick, hot flow around a spinning hole: a hazy ring around a dark depression" width="100%">
+</p>
+<p align="center"><sub><code>EHT VIEW · 17°</code> &nbsp;a/M 0.94 · H/R 0.30 · THE SHADOW AS A DARK DIP IN THE GLOW</sub></p>
+
+The thick model replaces the sheet with a volume of hot gas. Its density falls off as a Gaussian above and below the plane, with scale height H = (H/R)·R, plus an optional broader **haze**. Each ray integrates emission and absorption step by step through the Kerr metric. The gas is mostly optically thin, so it glows more than it blocks, and the shadow becomes a dark depression in the light instead of a hard edge. Gas inside the ISCO keeps glowing as it plunges in, which is why the Event Horizon Telescope images look like a hazy ring. **EHT view** (key 5) looks down at 17°, the angle we see M87* from.
 
 ### Spin the hole &nbsp;<sub><code>SPIN a/M</code></sub>
 
@@ -203,6 +225,15 @@ Without spin, light can circle the hole at $r = 1.5\,r_s$. With spin the equator
 A thin disk on Kerr circular orbits, $\Omega = \pm\sqrt{M}/(r^{3/2} \pm a\sqrt{M})$, with a Novikov–Thorne-like temperature profile and its inner edge locked to the ISCO (Bardeen–Press–Teukolsky): 3 rₛ without spin, 0.62 rₛ prograde at a/M = 0.998. A two-phase flow-map keeps differential shear from winding the texture up.
 
 </td></tr>
+<tr><td><code>THICK DISK</code></td><td>
+
+Density $n(R)\,e^{-z^2/2H^2}$ with $H = (H/R)\,R$, plus an envelope $2\times$ wider for haze, normalised so a vertical column matches the thin sheet's optical depth. Along each step the ray accumulates
+
+$$I \mathrel{+}= T\,S\,(1 - e^{-\Delta\tau}), \qquad T \mathrel{*}= e^{-k\,\Delta\tau}, \quad k = 0.3$$
+
+where $S$ is the gas's (redshifted) source function and $T$ the transmittance. The gas absorbs less than it emits, which approximates hot, optically thin flow. Steps shrink to $0.4H$ inside the gas, with two jittered samples per step.
+
+</td></tr>
 <tr><td><code>DOPPLER · REDSHIFT</code></td><td>
 
 The redshift is exact for each ray, using its conserved $b$. It splits into gravity plus frame dragging (camera frame vs. the emitter's local frame) and Doppler (local frame vs. orbiting gas). Observed intensity scales as $g^4$:
@@ -252,7 +283,7 @@ Every astrophysical hole is far colder than the 2.7 K microwave background. The 
 | `shift` / `RMB` drag | pan (off-axis) | | `[` `]` | time rate − / + |
 | `wheel` / pinch | zoom | | `,` `.` | step back / forward |
 | `← ↑ → ↓` | orbit | | `0` | reset time |
-| `+` `−` | dolly | | `1`–`4` | camera presets |
+| `+` `−` | dolly | | `1`–`5` | camera presets (5 = EHT view) |
 | double-click | Gargantua preset | | `G` | equatorial guides |
 | click *(inspect mode)* | trace that pixel's ray | | `D` | release / recall probe |
 | | | | `T` | ray inspector |
@@ -277,7 +308,9 @@ Every astrophysical hole is far colder than the 2.7 K microwave background. The 
 | | Doppler beaming | 0 – 100% | Scales the disk velocity used for beaming |
 | | Gravitational redshift | on / off | |
 | | Background | Stars · Grid · Void | |
-| Accretion disk | Inner edge at ISCO | on / off | Follows the spin and the rotation sense |
+| Accretion disk | Disk model | Thin sheet · Thick volumetric | Thick is the default; costs more GPU |
+| | Thickness H/R, haze | 0.02 – 0.5, 0 – 100% | Thick model only |
+| | Inner edge at ISCO | on / off | Follows the spin and the rotation sense |
 | | Palette | Cinematic · Blackbody | Blackbody also sets Doppler to 100% |
 | | Temperature, inner/outer edge, luminosity, optical depth, turbulence, rotation | | |
 | Camera | Observer | Static · Orbit · Free fall · Boost | Aberration and Doppler from the camera's own motion |
@@ -324,7 +357,7 @@ EventHorizon.snapshot();
 ```
 index.html        HUD markup, field notes
 css/style.css     interface
-js/shaders.js     Kerr geodesic tracer, disk, sky, bloom, tone mapping (GLSL ES 3.0)
+js/shaders.js     Kerr geodesic tracer, thin and volumetric disk, sky, bloom, tone mapping (GLSL ES 3.0)
 js/main.js        render graph, Kerr helpers, camera, observer modes, probe, ray inspector, UI, export
 docs/             README media
 ```

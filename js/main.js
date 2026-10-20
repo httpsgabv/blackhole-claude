@@ -32,6 +32,7 @@ const PRESETS = {
   gargantua: { dist: 19,  yaw: 0.0,  pitch: 0.07,  roll: -14, shiftX: 0.14, shiftY: 0.02, fov: 42 },
   edge:      { dist: 17,  yaw: 0.0,  pitch: 0.03,  roll: 0,   shiftX: 0,    shiftY: 0,    fov: 50 },
   top:       { dist: 24,  yaw: 0.0,  pitch: 1.52,  roll: 0,   shiftX: 0,    shiftY: 0,    fov: 55 },
+  eht:       { dist: 40,  yaw: 0.0,  pitch: 1.274, roll: 0,   shiftX: 0,    shiftY: 0,    fov: 16 },
   close:     { dist: 4.2, yaw: 0.5,  pitch: 0.16,  roll: -6,  shiftX: 0,    shiftY: 0,    fov: 80 },
 };
 
@@ -39,7 +40,7 @@ const P = {
   speed: 1, playing: true, mass: 'gargantua',
   planetOn: true, planetR: 9, planetInc: 10, planetSize: 0.24, infallL: 0.6, tidal: true,
   spinA: 0.6, gravity: 1, redshift: true, doppler: 0.35, sky: 'stars', stars: 1, guides: false,
-  diskOn: true, diskIsco: true, palette: 'cinematic', diskIn: 3, diskOut: 13, diskTemp: 6500, diskBright: 0.55,
+  diskOn: true, diskModel: 'thick', diskH: 0.1, haze: 0.25, diskIsco: true, palette: 'cinematic', diskIn: 3, diskOut: 13, diskTemp: 6500, diskBright: 0.55,
   turb: 0.7, opacity: 1.4, spin: 1,
   fov: 42, roll: -14, autoOrbit: false, orbitSpeed: 0.04,
   observer: 'static', obsBeta: 0.5, obsMove: true, obsBeam: true,
@@ -509,6 +510,8 @@ function render(){
   u1f(pr, 'uPhPro', kerrPhoton(aS, 1));
   u1f(pr, 'uPhRetro', kerrPhoton(aS, -1));
   u1f(pr, 'uIsco', kerrIsco(aS, P.spin));
+  u1f(pr, 'uThick', P.diskModel === 'thick' ? P.diskH : 0);
+  u1f(pr, 'uHaze', P.haze);
   u1f(pr, 'uEscape', Math.max(rCam * 1.05 + 2, P.diskOut * 1.4, 28));
   u1f(pr, 'uStepK', q.k);
   u1i(pr, 'uMaxSteps', q.steps);
@@ -617,6 +620,11 @@ const SECTIONS = [
   ]},
   { id: 'disk', title: 'Accretion Disk', items: [
     { t: 'toggle', k: 'diskOn', label: 'Accretion disk' },
+    { t: 'seg', k: 'diskModel', label: 'Disk model', opts: [['thin', 'THIN SHEET'], ['thick', 'THICK · VOLUMETRIC']], dep: 'diskOn',
+      hint: 'Thick traces light through glowing, partly transparent gas instead of a flat sheet. Costs more GPU time.' },
+    { t: 'range', k: 'diskH', label: 'Thickness H/R', min: 0.02, max: 0.5, step: 0.01, fmt: v => v.toFixed(2), dep: () => P.diskOn && P.diskModel === 'thick',
+      hint: 'Scale height over radius. Hot, inefficient flows like the one around M87* are puffy (0.3+); bright quasar disks are thin.' },
+    { t: 'range', k: 'haze', label: 'Haze', min: 0, max: 1, step: 0.01, fmt: pct, dep: () => P.diskOn && P.diskModel === 'thick' },
     { t: 'seg', k: 'palette', label: 'Palette', opts: [['cinematic', 'CINEMATIC'], ['blackbody', 'BLACKBODY']], dep: 'diskOn' },
     { t: 'range', k: 'diskTemp', label: 'Peak temperature', min: 1500, max: 30000, step: 100, fmt: v => Math.round(v) + ' K', dep: 'diskOn' },
     { t: 'toggle', k: 'diskIsco', label: 'Inner edge at ISCO', dep: 'diskOn' },
@@ -630,7 +638,8 @@ const SECTIONS = [
   ]},
   { id: 'cam', title: 'Camera', items: [
     { t: 'buttons', items: [['Gargantua', () => applyPreset('gargantua')], ['Edge-on', () => applyPreset('edge')],
-                            ['Polar', () => applyPreset('top')], ['Close pass', () => applyPreset('close')]] },
+                            ['Polar', () => applyPreset('top')], ['Close pass', () => applyPreset('close')],
+                            ['EHT view · 17°', () => applyPreset('eht'), 'wide']] },
     { t: 'range', k: 'fov', label: 'Field of view', min: 20, max: 120, step: 1, fmt: v => v + '°' },
     { t: 'range', k: 'roll', label: 'Roll', min: -60, max: 60, step: 1, fmt: v => v + '°' },
     { t: 'seg', k: 'observer', label: 'Observer', opts: [['static', 'STATIC'], ['orbit', 'ORBIT'], ['fall', 'FREE FALL'], ['boost', 'BOOST']],
@@ -979,6 +988,7 @@ addEventListener('keydown', e => {
     case '2': applyPreset('edge'); break;
     case '3': applyPreset('top'); break;
     case '4': applyPreset('close'); break;
+    case '5': applyPreset('eht'); break;
     case 'g': P.guides = !P.guides; syncUI(); break;
     case 'd': toggleProbe(); break;
     case 't': setInspectMode(!insp.mode); break;
@@ -1157,8 +1167,12 @@ function traceRay(px, py){
     const y0 = y;
     // same adaptive rule as the shader, at a finer base step
     const rdot = (y[0] * y[0] - 2 * M * y[0] + a * a) / (y[0] * y[0] + a * a * Math.cos(y[1]) ** 2) * y[3];
-    const h = -Math.min(Math.min(Math.max(0.012 * y[0], 0.002), 1), 0.25 * Math.max(y[0] - capture + 0.02, 1e-4) / Math.max(Math.abs(rdot), 1e-6))
-              * Math.min(1, Math.max(0.005, Math.sin(y[1]) * 5));
+    let h = Math.min(Math.min(Math.max(0.012 * y[0], 0.002), 1), 0.25 * Math.max(y[0] - capture + 0.02, 1e-4) / Math.max(Math.abs(rdot), 1e-6));
+    if(Lz !== 0){
+      const snA = Math.max(Math.sin(y[1]), 1e-4), w = Math.sqrt(y[4] * y[4] + Lz * Lz / (snA * snA));
+      h = Math.min(h, 0.3 * snA * (y[0] * y[0] + a * a * Math.cos(y[1]) ** 2) / Math.max(w, 1e-6));
+    }
+    h = -h;
     y = kerrStep(y, Lz, q, h, M, a);
     if(!(y[0] > 0) || !y.every(Number.isFinite) || Math.abs(y[3]) > 1e8){ outcome = 'horizon'; break; }
     const c1 = blToCart(y[0], y[1], y[2], a), seg = sub(c1, cPrev), sl = Math.hypot(seg[0], seg[1], seg[2]);
